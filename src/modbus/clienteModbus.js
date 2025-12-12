@@ -62,4 +62,73 @@ async function leerRegistrosModbus({ ip, puerto, indiceInicial, cantRegistros, u
   }
 }
 
-module.exports = { leerRegistrosModbus, MODO_MODBUS };
+/**
+ * Prueba la conexión a un dispositivo Modbus TCP
+ * Solo intenta conectar y leer un registro para verificar comunicación
+ *
+ * @param {Object} config - Configuración de conexión
+ * @param {string} config.ip - Dirección IP del dispositivo
+ * @param {number} config.puerto - Puerto Modbus (usualmente 502)
+ * @param {number} config.unitId - ID de unidad Modbus (por defecto 1)
+ * @returns {Promise<{exito: boolean, error?: string, tiempoMs?: number}>}
+ */
+async function testConexionModbus({ ip, puerto, unitId = 1 }) {
+  const puertoNum = Number(puerto);
+
+  // Validación básica
+  if (!ip || !puertoNum) {
+    return {
+      exito: false,
+      error: 'IP y puerto son requeridos',
+    };
+  }
+
+  // === MODO SIMULADO ===
+  if (MODO_MODBUS === 'simulado') {
+    // Simular un pequeño delay como si fuera conexión real
+    await new Promise(resolve => setTimeout(resolve, 100 + Math.random() * 200));
+    return {
+      exito: true,
+      tiempoMs: Math.floor(100 + Math.random() * 200),
+      mensaje: 'Conexión simulada exitosa',
+    };
+  }
+
+  // === MODO REAL ===
+  const cliente = new ModbusRTU();
+  const tiempoInicio = Date.now();
+
+  try {
+    // Intentar conectar con timeout de 5 segundos
+    await cliente.connectTCP(ip, { port: puertoNum });
+    cliente.setID(unitId);
+    cliente.setTimeout(5000);
+
+    // Intentar leer un solo registro para verificar comunicación
+    await cliente.readHoldingRegisters(0, 1);
+
+    const tiempoMs = Date.now() - tiempoInicio;
+
+    return {
+      exito: true,
+      tiempoMs,
+      mensaje: `Conexión exitosa en ${tiempoMs}ms`,
+    };
+  } catch (error) {
+    const tiempoMs = Date.now() - tiempoInicio;
+
+    return {
+      exito: false,
+      error: error.message || 'Error de conexión desconocido',
+      tiempoMs,
+    };
+  } finally {
+    try {
+      cliente.close();
+    } catch (e) {
+      // Ignorar errores al cerrar
+    }
+  }
+}
+
+module.exports = { leerRegistrosModbus, testConexionModbus, MODO_MODBUS };

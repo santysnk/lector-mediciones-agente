@@ -6,6 +6,7 @@ require('dotenv').config();
 const { leerRegistrosModbus, MODO_MODBUS } = require('./modbus/clienteModbus');
 const { obtenerAlimentadores } = require('./servicios/alimentadoresService');
 const { guardarLecturasBatch } = require('./servicios/lecturasService');
+const { iniciarServidorHTTP, PUERTO_HTTP } = require('./servidor/httpServer');
 const ui = require('./ui/consola');
 
 // Configuración
@@ -153,6 +154,11 @@ async function iniciarPolling() {
  */
 async function main() {
   ui.mostrarInicio();
+
+  // Iniciar servidor HTTP para recibir tests de conexión
+  iniciarServidorHTTP(() => {
+    ui.log(`Servidor HTTP escuchando en puerto ${PUERTO_HTTP}`, 'info');
+  });
 
   // Validar configuración
   if (!CONFIGURACION_ID) {
