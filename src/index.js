@@ -192,22 +192,27 @@ async function main() {
     },
   });
 
-  // Cargar alimentadores
-  const cargaExitosa = await cargarAlimentadores();
+  // === TEMPORALMENTE DESACTIVADO PARA PRUEBAS DE TEST CONEXIÓN ===
+  // // Cargar alimentadores
+  // const cargaExitosa = await cargarAlimentadores();
 
-  if (!cargaExitosa) {
-    ui.errorFatal('No se pudo iniciar: no hay alimentadores configurados para esta configuración.');
-    process.exit(1);
-  }
+  // if (!cargaExitosa) {
+  //   ui.errorFatal('No se pudo iniciar: no hay alimentadores configurados para esta configuración.');
+  //   process.exit(1);
+  // }
 
-  // Mostrar estado inicial
-  ui.renderizar();
+  // // Mostrar estado inicial
+  // ui.renderizar();
 
-  // Esperar un momento para que el usuario vea el estado inicial
-  await new Promise(resolve => setTimeout(resolve, 2000));
+  // // Esperar un momento para que el usuario vea el estado inicial
+  // await new Promise(resolve => setTimeout(resolve, 2000));
 
-  // Iniciar polling
-  await iniciarPolling();
+  // // Iniciar polling
+  // await iniciarPolling();
+  // === FIN TEMPORALMENTE DESACTIVADO ===
+
+  // Solo mantener WebSocket activo para tests manuales
+  console.log('\n[MODO TEST] Agente en modo solo WebSocket - esperando comandos de test...\n');
 }
 
 // Manejar señales de terminación
