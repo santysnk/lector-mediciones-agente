@@ -31,6 +31,7 @@
     "dotenv": "^17.2.3",
     "modbus-serial": "^8.0.23",
     "ora": "^5.4.1",
-    "pkg": "^5.8.1"
+    "pkg": "^5.8.1",
+    "socket.io-client": "^4.8.1"
   }
 }

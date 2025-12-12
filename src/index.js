@@ -6,7 +6,7 @@ require('dotenv').config();
 const { leerRegistrosModbus, MODO_MODBUS } = require('./modbus/clienteModbus');
 const { obtenerAlimentadores } = require('./servicios/alimentadoresService');
 const { guardarLecturasBatch } = require('./servicios/lecturasService');
-const { iniciarServidorHTTP, PUERTO_HTTP } = require('./servidor/httpServer');
+const { iniciarConexion, estaConectado, BACKEND_URL } = require('./servicios/websocketService');
 const ui = require('./ui/consola');
 
 // Configuración
@@ -155,11 +155,6 @@ async function iniciarPolling() {
 async function main() {
   ui.mostrarInicio();
 
-  // Iniciar servidor HTTP para recibir tests de conexión
-  iniciarServidorHTTP(() => {
-    ui.log(`Servidor HTTP escuchando en puerto ${PUERTO_HTTP}`, 'info');
-  });
-
   // Validar configuración
   if (!CONFIGURACION_ID) {
     ui.errorFatal('Falta la variable CONFIGURACION_ID en el archivo .env\n\nDebes especificar qué configuración va a monitorear este agente.');
@@ -174,6 +169,28 @@ async function main() {
   });
 
   ui.log(`Configuración: ${CONFIGURACION_ID.substring(0, 8)}...`, 'info');
+
+  // Iniciar conexión WebSocket al backend
+  ui.log(`Conectando al backend: ${BACKEND_URL}`, 'info');
+
+  iniciarConexion({
+    agenteId: `agente-${CONFIGURACION_ID.substring(0, 8)}`,
+    configuracionId: CONFIGURACION_ID,
+    onConectado: () => {
+      ui.log('Conectado al backend via WebSocket', 'exito');
+      ui.renderizar();
+    },
+    onDesconectado: (reason) => {
+      ui.log(`Desconectado del backend: ${reason}`, 'advertencia');
+      ui.renderizar();
+    },
+    onError: (error) => {
+      ui.log(`Error WebSocket: ${error.message}`, 'error');
+    },
+    onLog: (mensaje, tipo) => {
+      ui.log(`[WS] ${mensaje}`, tipo);
+    },
+  });
 
   // Cargar alimentadores
   const cargaExitosa = await cargarAlimentadores();
