@@ -63,17 +63,21 @@ async function leerRegistrosModbus({ ip, puerto, indiceInicial, cantRegistros, u
 }
 
 /**
- * Prueba la conexión a un dispositivo Modbus TCP
- * Solo intenta conectar y leer un registro para verificar comunicación
+ * Prueba la conexión a un dispositivo Modbus TCP y lee registros
+ * Lee los registros especificados y devuelve los valores
  *
  * @param {Object} config - Configuración de conexión
  * @param {string} config.ip - Dirección IP del dispositivo
  * @param {number} config.puerto - Puerto Modbus (usualmente 502)
  * @param {number} config.unitId - ID de unidad Modbus (por defecto 1)
- * @returns {Promise<{exito: boolean, error?: string, tiempoMs?: number}>}
+ * @param {number} config.indiceInicial - Primer registro a leer (por defecto 0)
+ * @param {number} config.cantRegistros - Cantidad de registros a leer (por defecto 10)
+ * @returns {Promise<{exito: boolean, error?: string, tiempoMs?: number, registros?: Array}>}
  */
-async function testConexionModbus({ ip, puerto, unitId = 1 }) {
+async function testConexionModbus({ ip, puerto, unitId = 1, indiceInicial = 0, cantRegistros = 10 }) {
   const puertoNum = Number(puerto);
+  const inicio = Number(indiceInicial) || 0;
+  const cantidad = Number(cantRegistros) || 10;
 
   // Validación básica
   if (!ip || !puertoNum) {
@@ -87,10 +91,17 @@ async function testConexionModbus({ ip, puerto, unitId = 1 }) {
   if (MODO_MODBUS === 'simulado') {
     // Simular un pequeño delay como si fuera conexión real
     await new Promise(resolve => setTimeout(resolve, 100 + Math.random() * 200));
+    // Generar valores simulados
+    const registros = Array.from({ length: cantidad }, (_, i) => ({
+      indice: inicio + i,
+      direccion: inicio + i,
+      valor: Math.floor(Math.random() * 65536),
+    }));
     return {
       exito: true,
       tiempoMs: Math.floor(100 + Math.random() * 200),
       mensaje: 'Conexión simulada exitosa',
+      registros,
     };
   }
 
@@ -104,15 +115,23 @@ async function testConexionModbus({ ip, puerto, unitId = 1 }) {
     cliente.setID(unitId);
     cliente.setTimeout(5000);
 
-    // Intentar leer un solo registro para verificar comunicación
-    await cliente.readHoldingRegisters(0, 1);
+    // Leer los registros especificados
+    const respuesta = await cliente.readHoldingRegisters(inicio, cantidad);
 
     const tiempoMs = Date.now() - tiempoInicio;
+
+    // Formatear los registros para la respuesta
+    const registros = respuesta.data.map((valor, i) => ({
+      indice: i,
+      direccion: inicio + i,
+      valor: valor,
+    }));
 
     return {
       exito: true,
       tiempoMs,
       mensaje: `Conexión exitosa en ${tiempoMs}ms`,
+      registros,
     };
   } catch (error) {
     const tiempoMs = Date.now() - tiempoInicio;

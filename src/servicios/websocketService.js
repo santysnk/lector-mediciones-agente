@@ -74,13 +74,13 @@ function iniciarConexion(opciones = {}) {
 
   // === Evento: Solicitud de test de conexión Modbus ===
   socket.on('modbus:test:solicitud', async (datos) => {
-    const { requestId, ip, puerto, unitId } = datos;
+    const { requestId, ip, puerto, unitId, indiceInicial, cantRegistros } = datos;
 
-    log(`Recibida solicitud de test: ${ip}:${puerto}`, 'info');
+    log(`Recibida solicitud de test: ${ip}:${puerto} (registros: ${indiceInicial}-${indiceInicial + cantRegistros})`, 'info');
 
     try {
-      // Ejecutar el test de conexión Modbus
-      const resultado = await testConexionModbus({ ip, puerto, unitId });
+      // Ejecutar el test de conexión Modbus con lectura de registros
+      const resultado = await testConexionModbus({ ip, puerto, unitId, indiceInicial, cantRegistros });
 
       // Enviar respuesta al backend
       socket.emit('modbus:test:respuesta', {
