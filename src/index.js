@@ -6,6 +6,7 @@ require('dotenv').config();
 const { leerRegistrosModbus, MODO_MODBUS } = require('./modbus/clienteModbus');
 const { obtenerAlimentadores } = require('./servicios/alimentadoresService');
 const { guardarLecturasBatch } = require('./servicios/lecturasService');
+const ui = require('./ui/consola');
 
 // Configuración
 const CONFIGURACION_ID = process.env.CONFIGURACION_ID;
@@ -14,42 +15,23 @@ const INTERVALO_LECTURA = Number(process.env.INTERVALO_LECTURA) || 60;
 // Estado del agente
 let alimentadoresCache = [];
 let cicloActivo = false;
-let contadorCiclos = 0;
-
-/**
- * Muestra el banner de inicio
- */
-function mostrarBanner() {
-  console.log(`
-╔════════════════════════════════════════════════════════════╗
-║   Lector Mediciones - Agente de Lecturas                   ║
-║   Modo: ${MODO_MODBUS.toUpperCase().padEnd(10)}                                    ║
-║   Intervalo: ${INTERVALO_LECTURA}s                                          ║
-╚════════════════════════════════════════════════════════════╝
-  `);
-}
 
 /**
  * Carga o recarga la lista de alimentadores desde Supabase
  */
 async function cargarAlimentadores() {
-  console.log('[Agente] Cargando alimentadores desde Supabase...');
+  ui.log('Cargando alimentadores desde Supabase...', 'info');
 
   const alimentadores = await obtenerAlimentadores(CONFIGURACION_ID);
 
   if (alimentadores.length === 0) {
-    console.warn('[Agente] No se encontraron alimentadores para monitorear');
+    ui.log('No se encontraron alimentadores para monitorear', 'advertencia');
     return false;
   }
 
   alimentadoresCache = alimentadores;
-  console.log(`[Agente] ${alimentadores.length} alimentador(es) cargados:`);
-
-  alimentadores.forEach((alim) => {
-    const tieneRele = alim.config_rele?.ip ? 'Sí' : 'No';
-    const tieneAnalizador = alim.config_analizador?.ip ? 'Sí' : 'No';
-    console.log(`  - ${alim.nombre} (${alim.nombrePuesto}) | Relé: ${tieneRele} | Analizador: ${tieneAnalizador}`);
-  });
+  ui.setAlimentadores(alimentadores);
+  ui.log(`${alimentadores.length} alimentador(es) cargados`, 'exito');
 
   return true;
 }
@@ -61,61 +43,86 @@ async function leerDispositivo(alimentador, tipoDispositivo) {
   const config = tipoDispositivo === 'analizador' ? alimentador.config_analizador : alimentador.config_rele;
 
   if (!config?.ip || !config?.puerto) {
-    return null;
+    return { valores: null, error: null };
   }
 
-  const valores = await leerRegistrosModbus({
-    ip: config.ip,
-    puerto: config.puerto,
-    indiceInicial: config.indiceInicial || 0,
-    cantRegistros: config.cantRegistros || 10,
-    unitId: config.unitId || 1,
-  });
+  try {
+    const valores = await leerRegistrosModbus({
+      ip: config.ip,
+      puerto: config.puerto,
+      indiceInicial: config.indiceInicial || 0,
+      cantRegistros: config.cantRegistros || 10,
+      unitId: config.unitId || 1,
+    });
 
-  return valores;
+    return { valores, error: null };
+  } catch (error) {
+    return { valores: null, error: error.message };
+  }
 }
 
 /**
  * Ejecuta un ciclo de lectura de todos los alimentadores
  */
 async function ejecutarCicloLectura() {
-  contadorCiclos++;
-  const timestamp = new Date().toISOString();
-  console.log(`\n[Ciclo ${contadorCiclos}] ${timestamp}`);
+  ui.incrementarCiclo();
+  ui.log(`Iniciando ciclo de lectura...`, 'ciclo');
 
   const lecturas = [];
 
   for (const alimentador of alimentadoresCache) {
     // Leer relé
-    const valoresRele = await leerDispositivo(alimentador, 'rele');
-    if (valoresRele) {
-      lecturas.push({
-        alimentador_id: alimentador.id,
-        tipo_dispositivo: 'rele',
-        valores: valoresRele,
-      });
-      console.log(`  ✓ ${alimentador.nombre} (relé): ${valoresRele.length} registros`);
+    if (alimentador.config_rele?.ip) {
+      const { valores, error } = await leerDispositivo(alimentador, 'rele');
+
+      if (valores) {
+        lecturas.push({
+          alimentador_id: alimentador.id,
+          tipo_dispositivo: 'rele',
+          valores: valores,
+        });
+        ui.registrarLectura(alimentador.id, 'rele', true);
+        ui.log(`${alimentador.nombre} (relé): ${valores.length} registros`, 'exito');
+      } else if (error) {
+        ui.registrarLectura(alimentador.id, 'rele', false, `${alimentador.nombre}: ${error}`);
+        ui.log(`${alimentador.nombre} (relé): ${error}`, 'error');
+      }
     }
 
     // Leer analizador
-    const valoresAnalizador = await leerDispositivo(alimentador, 'analizador');
-    if (valoresAnalizador) {
-      lecturas.push({
-        alimentador_id: alimentador.id,
-        tipo_dispositivo: 'analizador',
-        valores: valoresAnalizador,
-      });
-      console.log(`  ✓ ${alimentador.nombre} (analizador): ${valoresAnalizador.length} registros`);
+    if (alimentador.config_analizador?.ip) {
+      const { valores, error } = await leerDispositivo(alimentador, 'analizador');
+
+      if (valores) {
+        lecturas.push({
+          alimentador_id: alimentador.id,
+          tipo_dispositivo: 'analizador',
+          valores: valores,
+        });
+        ui.registrarLectura(alimentador.id, 'analizador', true);
+        ui.log(`${alimentador.nombre} (analizador): ${valores.length} registros`, 'exito');
+      } else if (error) {
+        ui.registrarLectura(alimentador.id, 'analizador', false, `${alimentador.nombre}: ${error}`);
+        ui.log(`${alimentador.nombre} (analizador): ${error}`, 'error');
+      }
     }
   }
 
   // Guardar todas las lecturas en Supabase
   if (lecturas.length > 0) {
     const { exitosas, fallidas } = await guardarLecturasBatch(lecturas);
-    console.log(`[Ciclo ${contadorCiclos}] Guardadas: ${exitosas} | Fallidas: ${fallidas}`);
+
+    if (fallidas > 0) {
+      ui.log(`Guardadas: ${exitosas} | Fallidas: ${fallidas}`, 'advertencia');
+    } else {
+      ui.log(`${exitosas} lecturas guardadas en Supabase`, 'exito');
+    }
   } else {
-    console.log(`[Ciclo ${contadorCiclos}] No hubo lecturas para guardar`);
+    ui.log('No hubo lecturas para guardar', 'advertencia');
   }
+
+  // Actualizar la pantalla
+  ui.renderizar();
 }
 
 /**
@@ -123,12 +130,12 @@ async function ejecutarCicloLectura() {
  */
 async function iniciarPolling() {
   if (cicloActivo) {
-    console.warn('[Agente] El ciclo ya está activo');
+    ui.log('El ciclo ya está activo', 'advertencia');
     return;
   }
 
   cicloActivo = true;
-  console.log(`[Agente] Iniciando polling cada ${INTERVALO_LECTURA} segundos...`);
+  ui.log(`Iniciando polling cada ${INTERVALO_LECTURA} segundos...`, 'info');
 
   // Primera lectura inmediata
   await ejecutarCicloLectura();
@@ -145,47 +152,67 @@ async function iniciarPolling() {
  * Función principal
  */
 async function main() {
-  mostrarBanner();
+  ui.mostrarInicio();
 
   // Validar configuración
   if (!CONFIGURACION_ID) {
-    console.error('ERROR: Falta la variable CONFIGURACION_ID en el archivo .env');
-    console.error('       Debes especificar qué configuración va a monitorear este agente.');
+    ui.errorFatal('Falta la variable CONFIGURACION_ID en el archivo .env\n\nDebes especificar qué configuración va a monitorear este agente.');
     process.exit(1);
   }
 
-  console.log(`[Agente] Configuración ID: ${CONFIGURACION_ID}`);
+  // Configurar UI
+  ui.setConfiguracion({
+    modo: MODO_MODBUS,
+    intervalo: INTERVALO_LECTURA,
+    configuracionId: CONFIGURACION_ID,
+  });
+
+  ui.log(`Configuración: ${CONFIGURACION_ID.substring(0, 8)}...`, 'info');
 
   // Cargar alimentadores
   const cargaExitosa = await cargarAlimentadores();
 
   if (!cargaExitosa) {
-    console.error('[Agente] No se pudo iniciar: no hay alimentadores configurados');
+    ui.errorFatal('No se pudo iniciar: no hay alimentadores configurados para esta configuración.');
     process.exit(1);
   }
 
+  // Mostrar estado inicial
+  ui.renderizar();
+
+  // Esperar un momento para que el usuario vea el estado inicial
+  await new Promise(resolve => setTimeout(resolve, 2000));
+
   // Iniciar polling
   await iniciarPolling();
-
-  // Mantener el proceso vivo
-  console.log('\n[Agente] Presiona Ctrl+C para detener el agente');
 }
 
 // Manejar señales de terminación
 process.on('SIGINT', () => {
-  console.log('\n[Agente] Deteniendo...');
+  console.log('\n');
+  ui.log('Deteniendo agente...', 'advertencia');
   cicloActivo = false;
-  process.exit(0);
+  setTimeout(() => process.exit(0), 500);
 });
 
 process.on('SIGTERM', () => {
-  console.log('\n[Agente] Terminando...');
+  ui.log('Terminando agente...', 'advertencia');
   cicloActivo = false;
-  process.exit(0);
+  setTimeout(() => process.exit(0), 500);
+});
+
+// Manejar errores no capturados
+process.on('uncaughtException', (error) => {
+  ui.errorFatal(`Error no capturado: ${error.message}`);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason) => {
+  ui.log(`Promesa rechazada: ${reason}`, 'error');
 });
 
 // Ejecutar
 main().catch((error) => {
-  console.error('[Agente] Error fatal:', error);
+  ui.errorFatal(`Error fatal: ${error.message}`);
   process.exit(1);
 });
