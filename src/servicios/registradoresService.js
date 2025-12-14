@@ -15,6 +15,8 @@ async function obtenerRegistradoresPorAgente(agenteId) {
     return [];
   }
 
+  console.log('[RegistradoresService] Buscando registradores para agente:', agenteId);
+
   // Obtener TODOS los registradores (activos e inactivos)
   // El campo 'activo' indica si debe hacer polling, pero igual los mostramos
   const { data: registradores, error } = await supabase
@@ -26,6 +28,13 @@ async function obtenerRegistradoresPorAgente(agenteId) {
   if (error) {
     console.error('[RegistradoresService] Error obteniendo registradores:', error.message);
     return [];
+  }
+
+  console.log('[RegistradoresService] Registradores encontrados:', registradores?.length || 0);
+  if (registradores && registradores.length > 0) {
+    registradores.forEach(r => {
+      console.log(`  - ${r.nombre}: activo=${r.activo}, ip=${r.ip}`);
+    });
   }
 
   return registradores || [];

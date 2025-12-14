@@ -39,9 +39,10 @@ async function cargarRegistradores() {
   const registradores = await obtenerRegistradoresPorAgente(agente.id);
 
   if (registradores.length === 0) {
-    terminal.log('No hay registradores activos configurados', 'advertencia');
+    terminal.log('No hay registradores configurados para este agente', 'advertencia');
   } else {
-    terminal.log(`${registradores.length} registrador(es) cargados`, 'exito');
+    const activos = registradores.filter(r => r.activo).length;
+    terminal.log(`${registradores.length} registrador(es) cargados (${activos} activos)`, 'exito');
   }
 
   registradoresCache = registradores;
