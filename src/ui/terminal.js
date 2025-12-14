@@ -63,22 +63,17 @@ function inicializar(opciones = {}) {
     top: 0,
     left: 0,
     width: '100%',
-    height: 3,
+    height: 1,
     tags: true,
-    border: {
-      type: 'line',
-    },
     style: {
       fg: 'white',
-      border: {
-        fg: 'cyan',
-      },
+      bg: 'black',
     },
   });
 
   // ========== REGISTRADORES ==========
   registradoresBox = blessed.box({
-    top: 3,
+    top: 1,
     left: 0,
     width: '100%',
     height: '50%-3',

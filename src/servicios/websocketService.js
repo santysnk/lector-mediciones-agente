@@ -31,6 +31,7 @@ let onDesconectado = null;
 let onError = null;
 let onLog = null;
 let onVinculado = null;
+let onRegistradoresActualizar = null;
 
 /**
  * Función auxiliar para logging
@@ -61,6 +62,7 @@ function iniciarConexion(opciones = {}) {
   if (opciones.onError) onError = opciones.onError;
   if (opciones.onLog) onLog = opciones.onLog;
   if (opciones.onVinculado) onVinculado = opciones.onVinculado;
+  if (opciones.onRegistradoresActualizar) onRegistradoresActualizar = opciones.onRegistradoresActualizar;
 
   log(`Conectando a backend: ${BACKEND_URL}`, 'info');
 
@@ -124,6 +126,17 @@ function iniciarConexion(opciones = {}) {
       if (onVinculado) onVinculado(datos.workspace);
     } else {
       log(`Error de vinculación: ${datos.error}`, 'error');
+    }
+  });
+
+  // === Evento: Actualización de registradores desde el frontend ===
+  socket.on('registradores:actualizar', (datos) => {
+    const { agenteId, registradorId, activo } = datos;
+
+    // Solo procesar si es para este agente
+    if (agenteData && agenteData.id === agenteId) {
+      log(`Registrador ${registradorId} ${activo ? 'activado' : 'desactivado'} desde frontend`, 'info');
+      if (onRegistradoresActualizar) onRegistradoresActualizar(datos);
     }
   });
 

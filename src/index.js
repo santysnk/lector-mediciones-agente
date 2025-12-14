@@ -252,6 +252,13 @@ async function main() {
     onLog: (mensaje, tipo) => {
       terminal.log(`[WS] ${mensaje}`, tipo);
     },
+    onRegistradoresActualizar: async () => {
+      // Recargar registradores cuando cambian desde el frontend
+      terminal.log('Recargando registradores (cambio desde frontend)...', 'ciclo');
+      detenerPolling();
+      await cargarRegistradores();
+      iniciarPolling();
+    },
   });
 }
 
