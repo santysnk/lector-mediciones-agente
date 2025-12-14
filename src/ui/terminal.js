@@ -93,6 +93,17 @@ function inicializar(opciones = {}) {
     },
   });
 
+  // Manejar scroll con rueda del mouse en registradoresBox
+  registradoresBox.on('wheeldown', () => {
+    registradoresBox.scroll(1);
+    screen.render();
+  });
+
+  registradoresBox.on('wheelup', () => {
+    registradoresBox.scroll(-1);
+    screen.render();
+  });
+
   // ========== LOG (resto de la pantalla menos footer) ==========
   logBox = blessed.log({
     top: 13,
@@ -115,7 +126,18 @@ function inicializar(opciones = {}) {
       track: { bg: 'gray' },
       style: { bg: 'yellow' },
     },
-    scrollOnInput: true,
+    scrollOnInput: false, // Desactivar auto-scroll para permitir scroll manual
+  });
+
+  // Manejar scroll con rueda del mouse en logBox
+  logBox.on('wheeldown', () => {
+    logBox.scroll(3);
+    screen.render();
+  });
+
+  logBox.on('wheelup', () => {
+    logBox.scroll(-3);
+    screen.render();
   });
 
   // ========== FOOTER (1 línea) ==========
