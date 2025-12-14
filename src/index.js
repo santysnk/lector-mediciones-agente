@@ -11,7 +11,11 @@ const {
   obtenerDatosAgente,
   BACKEND_URL,
 } = require('./servicios/websocketService');
-const terminal = require('./ui/terminal');
+// Interfaz: 'web' para navegador, 'terminal' para blessed
+const INTERFAZ = process.env.INTERFAZ || 'web';
+const terminal = INTERFAZ === 'terminal'
+  ? require('./ui/terminal')
+  : require('./ui/webServer');
 
 // Configuración
 const CLAVE_SECRETA = process.env.CLAVE_SECRETA;
