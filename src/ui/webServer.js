@@ -21,6 +21,7 @@ const estado = {
 const MAX_LOGS = 100;
 
 let server = null;
+let onSalir = null;
 
 // ============================================
 // HTML Template
@@ -121,8 +122,30 @@ function generarHTML() {
       color: #00d9ff;
       margin-bottom: 15px;
       font-size: 1.2rem;
+    }
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
       border-bottom: 1px solid #0f3460;
       padding-bottom: 10px;
+      margin-bottom: 15px;
+    }
+    .section-header h2 {
+      margin-bottom: 0;
+    }
+    .btn-limpiar {
+      background: #ff475730;
+      color: #ff4757;
+      border: 1px solid #ff4757;
+      padding: 6px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.8rem;
+      transition: all 0.2s;
+    }
+    .btn-limpiar:hover {
+      background: #ff475750;
     }
 
     table {
@@ -178,10 +201,28 @@ function generarHTML() {
 
     /* Footer */
     .footer {
-      text-align: center;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 20px;
       color: #666;
       padding: 20px;
       font-size: 0.85rem;
+    }
+    .btn-apagar {
+      background: #ff475720;
+      color: #ff4757;
+      border: 1px solid #ff4757;
+      padding: 10px 20px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      font-weight: 600;
+      transition: all 0.2s;
+    }
+    .btn-apagar:hover {
+      background: #ff4757;
+      color: #fff;
     }
 
     /* Auto-refresh indicator */
@@ -246,14 +287,18 @@ function generarHTML() {
     </div>
 
     <div class="section">
-      <h2>📝 Log (últimos <span id="logs-count">${estado.logs.length}</span> mensajes)</h2>
+      <div class="section-header">
+        <h2>📝 Log (últimos <span id="logs-count">${estado.logs.length}</span> mensajes)</h2>
+        <button id="btn-limpiar-logs" class="btn-limpiar" onclick="limpiarLogs()">🗑️ Limpiar</button>
+      </div>
       <div id="logs-container" class="logs-container">
         ${logsHTML}
       </div>
     </div>
 
     <div class="footer">
-      Agente Modbus v1.0 | Puerto web: ${WEB_PORT} | Presiona Ctrl+C en la terminal para detener
+      <button id="btn-apagar" class="btn-apagar" onclick="apagarAgente()">⏻ Apagar Agente</button>
+      <span>Agente Modbus v1.0 | Puerto web: ${WEB_PORT}</span>
     </div>
   </div>
 
@@ -360,6 +405,35 @@ function generarHTML() {
       return div.innerHTML;
     }
 
+    // Limpiar logs
+    async function limpiarLogs() {
+      try {
+        const response = await fetch('/api/limpiar-logs', { method: 'POST' });
+        if (response.ok) {
+          document.getElementById('logs-container').innerHTML =
+            '<div class="log-entry info"><span class="timestamp"></span><span class="mensaje">Logs limpiados</span></div>';
+          document.getElementById('logs-count').textContent = '0';
+          ultimoLogCount = 0;
+        }
+      } catch (error) {
+        console.error('Error limpiando logs:', error);
+      }
+    }
+
+    // Apagar agente
+    async function apagarAgente() {
+      if (!confirm('¿Estás seguro de que quieres apagar el agente?')) return;
+
+      try {
+        document.getElementById('btn-apagar').disabled = true;
+        document.getElementById('btn-apagar').textContent = 'Apagando...';
+        await fetch('/api/apagar', { method: 'POST' });
+        document.body.innerHTML = '<div style="display:flex;justify-content:center;align-items:center;height:100vh;background:#1a1a2e;color:#ff4757;font-size:1.5rem;">Agente apagado. Puedes cerrar esta pestaña.</div>';
+      } catch (error) {
+        console.error('Error apagando:', error);
+      }
+    }
+
     // Actualizar cada 2 segundos
     setInterval(actualizarEstado, 2000);
   </script>
@@ -397,6 +471,9 @@ function formatearTiempoActivo() {
 function inicializar(opciones = {}) {
   estado.iniciado = new Date();
 
+  // Guardar callback de salida
+  if (opciones.onSalir) onSalir = opciones.onSalir;
+
   server = http.createServer((req, res) => {
     if (req.url === '/' || req.url === '/index.html') {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -404,6 +481,22 @@ function inicializar(opciones = {}) {
     } else if (req.url === '/api/estado') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(estado));
+    } else if (req.url === '/api/limpiar-logs' && req.method === 'POST') {
+      estado.logs = [];
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    } else if (req.url === '/api/apagar' && req.method === 'POST') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+      // Ejecutar callback de salida si existe
+      if (onSalir) {
+        setTimeout(() => {
+          onSalir();
+          process.exit(0);
+        }, 100);
+      } else {
+        setTimeout(() => process.exit(0), 100);
+      }
     } else {
       res.writeHead(404);
       res.end('Not Found');
