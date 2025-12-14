@@ -4,315 +4,279 @@
 require('dotenv').config();
 
 const { leerRegistrosModbus, MODO_MODBUS } = require('./modbus/clienteModbus');
-const { obtenerAlimentadores } = require('./servicios/alimentadoresService');
-const { guardarLecturasBatch } = require('./servicios/lecturasService');
+const { obtenerRegistradoresPorAgente, guardarLectura } = require('./servicios/registradoresService');
 const {
   iniciarConexion,
-  estaConectado,
-  estaAutenticado,
-  enviarCodigoVinculacion,
+  cerrarConexion,
+  obtenerDatosAgente,
   BACKEND_URL,
 } = require('./servicios/websocketService');
-const ui = require('./ui/consola');
-const readline = require('readline');
+const terminal = require('./ui/terminal');
 
 // Configuración
 const CLAVE_SECRETA = process.env.CLAVE_SECRETA;
-const INTERVALO_LECTURA = Number(process.env.INTERVALO_LECTURA) || 60;
 
 // Estado del agente
-let alimentadoresCache = [];
+let registradoresCache = [];
 let cicloActivo = false;
-let workspaceVinculado = null;
-
-// Interfaz de readline para comandos
-let rl = null;
+let intervalosLectura = new Map(); // Map de registradorId -> intervalId
+let contadoresProxLectura = new Map(); // Map de registradorId -> segundos restantes
+let contadorIntervalId = null;
 
 /**
- * Carga o recarga la lista de alimentadores desde Supabase
+ * Carga los registradores desde Supabase
  */
-async function cargarAlimentadores() {
-  ui.log('Cargando alimentadores desde Supabase...', 'info');
+async function cargarRegistradores() {
+  const agente = obtenerDatosAgente();
 
-  const alimentadores = await obtenerAlimentadores(CONFIGURACION_ID);
-
-  if (alimentadores.length === 0) {
-    ui.log('No se encontraron alimentadores para monitorear', 'advertencia');
-    return false;
+  if (!agente || !agente.id) {
+    terminal.log('No hay agente autenticado para cargar registradores', 'advertencia');
+    return [];
   }
 
-  alimentadoresCache = alimentadores;
-  ui.setAlimentadores(alimentadores);
-  ui.log(`${alimentadores.length} alimentador(es) cargados`, 'exito');
+  terminal.log('Cargando registradores desde Supabase...', 'info');
 
-  return true;
+  const registradores = await obtenerRegistradoresPorAgente(agente.id);
+
+  if (registradores.length === 0) {
+    terminal.log('No hay registradores activos configurados', 'advertencia');
+  } else {
+    terminal.log(`${registradores.length} registrador(es) cargados`, 'exito');
+  }
+
+  registradoresCache = registradores;
+  terminal.setRegistradores(registradores);
+
+  return registradores;
 }
 
 /**
- * Lee un dispositivo (relé o analizador) de un alimentador
+ * Lee un registrador Modbus y guarda la lectura
  */
-async function leerDispositivo(alimentador, tipoDispositivo) {
-  const config = tipoDispositivo === 'analizador' ? alimentador.config_analizador : alimentador.config_rele;
-
-  if (!config?.ip || !config?.puerto) {
-    return { valores: null, error: null };
-  }
+async function leerRegistrador(registrador) {
+  const inicio = Date.now();
 
   try {
+    terminal.actualizarRegistrador(registrador.id, { estado: 'leyendo' });
+
     const valores = await leerRegistrosModbus({
-      ip: config.ip,
-      puerto: config.puerto,
-      indiceInicial: config.indiceInicial || 0,
-      cantRegistros: config.cantRegistros || 10,
-      unitId: config.unitId || 1,
+      ip: registrador.ip,
+      puerto: registrador.puerto,
+      indiceInicial: registrador.indice_inicial,
+      cantRegistros: registrador.cantidad_registros,
+      unitId: registrador.unit_id || 1,
     });
 
-    return { valores, error: null };
-  } catch (error) {
-    return { valores: null, error: error.message };
-  }
-}
+    const tiempoMs = Date.now() - inicio;
 
-/**
- * Ejecuta un ciclo de lectura de todos los alimentadores
- */
-async function ejecutarCicloLectura() {
-  ui.incrementarCiclo();
-  ui.log(`Iniciando ciclo de lectura...`, 'ciclo');
+    // Guardar en Supabase
+    const resultado = await guardarLectura(
+      registrador.tabla_lecturas,
+      registrador.id,
+      valores,
+      registrador.indice_inicial
+    );
 
-  const lecturas = [];
-
-  for (const alimentador of alimentadoresCache) {
-    // Leer relé
-    if (alimentador.config_rele?.ip) {
-      const { valores, error } = await leerDispositivo(alimentador, 'rele');
-
-      if (valores) {
-        lecturas.push({
-          alimentador_id: alimentador.id,
-          tipo_dispositivo: 'rele',
-          valores: valores,
-        });
-        ui.registrarLectura(alimentador.id, 'rele', true);
-        ui.log(`${alimentador.nombre} (relé): ${valores.length} registros`, 'exito');
-      } else if (error) {
-        ui.registrarLectura(alimentador.id, 'rele', false, `${alimentador.nombre}: ${error}`);
-        ui.log(`${alimentador.nombre} (relé): ${error}`, 'error');
-      }
-    }
-
-    // Leer analizador
-    if (alimentador.config_analizador?.ip) {
-      const { valores, error } = await leerDispositivo(alimentador, 'analizador');
-
-      if (valores) {
-        lecturas.push({
-          alimentador_id: alimentador.id,
-          tipo_dispositivo: 'analizador',
-          valores: valores,
-        });
-        ui.registrarLectura(alimentador.id, 'analizador', true);
-        ui.log(`${alimentador.nombre} (analizador): ${valores.length} registros`, 'exito');
-      } else if (error) {
-        ui.registrarLectura(alimentador.id, 'analizador', false, `${alimentador.nombre}: ${error}`);
-        ui.log(`${alimentador.nombre} (analizador): ${error}`, 'error');
-      }
-    }
-  }
-
-  // Guardar todas las lecturas en Supabase
-  if (lecturas.length > 0) {
-    const { exitosas, fallidas } = await guardarLecturasBatch(lecturas);
-
-    if (fallidas > 0) {
-      ui.log(`Guardadas: ${exitosas} | Fallidas: ${fallidas}`, 'advertencia');
+    if (resultado.exito) {
+      terminal.actualizarRegistrador(registrador.id, { estado: 'activo' });
+      terminal.log(
+        `${registrador.nombre}: ${valores.length} registros (${tiempoMs}ms)`,
+        'exito'
+      );
     } else {
-      ui.log(`${exitosas} lecturas guardadas en Supabase`, 'exito');
+      terminal.actualizarRegistrador(registrador.id, { estado: 'error' });
+      terminal.log(
+        `${registrador.nombre}: Error guardando - ${resultado.error}`,
+        'error'
+      );
     }
-  } else {
-    ui.log('No hubo lecturas para guardar', 'advertencia');
-  }
 
-  // Actualizar la pantalla
-  ui.renderizar();
+    return { exito: true, valores };
+
+  } catch (error) {
+    terminal.actualizarRegistrador(registrador.id, { estado: 'error' });
+    terminal.log(
+      `${registrador.nombre}: ${error.message}`,
+      'error'
+    );
+    return { exito: false, error: error.message };
+  }
 }
 
 /**
- * Inicia el ciclo de polling
+ * Inicia el ciclo de polling para todos los registradores
  */
-async function iniciarPolling() {
+function iniciarPolling() {
   if (cicloActivo) {
-    ui.log('El ciclo ya está activo', 'advertencia');
+    terminal.log('El ciclo de polling ya está activo', 'advertencia');
+    return;
+  }
+
+  if (registradoresCache.length === 0) {
+    terminal.log('No hay registradores para monitorear', 'advertencia');
     return;
   }
 
   cicloActivo = true;
-  ui.log(`Iniciando polling cada ${INTERVALO_LECTURA} segundos...`, 'info');
+  terminal.log('Iniciando polling de registradores...', 'ciclo');
 
-  // Primera lectura inmediata
-  await ejecutarCicloLectura();
+  // Crear un intervalo por cada registrador según su configuración
+  registradoresCache.forEach((reg) => {
+    const intervaloSegundos = reg.intervalo_segundos || 60;
+    const intervaloMs = intervaloSegundos * 1000;
 
-  // Configurar intervalo
-  setInterval(async () => {
-    if (cicloActivo) {
-      await ejecutarCicloLectura();
-    }
-  }, INTERVALO_LECTURA * 1000);
+    // Inicializar contador de próxima lectura
+    contadoresProxLectura.set(reg.id, intervaloSegundos);
+    terminal.actualizarRegistrador(reg.id, { proximaLectura: intervaloSegundos });
+
+    // Primera lectura inmediata
+    leerRegistrador(reg);
+
+    // Configurar intervalo para lecturas subsiguientes
+    const intervalId = setInterval(() => {
+      if (cicloActivo) {
+        leerRegistrador(reg);
+        contadoresProxLectura.set(reg.id, intervaloSegundos);
+        terminal.actualizarRegistrador(reg.id, { proximaLectura: intervaloSegundos });
+      }
+    }, intervaloMs);
+
+    intervalosLectura.set(reg.id, intervalId);
+  });
+
+  // Actualizar contadores cada segundo
+  contadorIntervalId = setInterval(() => {
+    if (!cicloActivo) return;
+
+    registradoresCache.forEach((reg) => {
+      const segundos = contadoresProxLectura.get(reg.id);
+      if (segundos > 0) {
+        const nuevoValor = segundos - 1;
+        contadoresProxLectura.set(reg.id, nuevoValor);
+        terminal.actualizarRegistrador(reg.id, { proximaLectura: nuevoValor });
+      }
+    });
+  }, 1000);
 }
 
 /**
- * Procesa comandos del usuario
+ * Detiene el ciclo de polling
  */
-function procesarComando(input) {
-  const comando = input.trim().toLowerCase();
+function detenerPolling() {
+  cicloActivo = false;
 
-  if (comando.startsWith('vincular ')) {
-    const codigo = input.trim().substring(9).toUpperCase();
-    if (codigo.length !== 9 || codigo[4] !== '-') {
-      console.log('\n[ERROR] Formato de código inválido. Usa: vincular XXXX-XXXX\n');
-      return;
-    }
+  intervalosLectura.forEach((intervalId) => {
+    clearInterval(intervalId);
+  });
+  intervalosLectura.clear();
+  contadoresProxLectura.clear();
 
-    if (!estaConectado()) {
-      console.log('\n[ERROR] No estás conectado al backend\n');
-      return;
-    }
-
-    if (!estaAutenticado()) {
-      console.log('\n[ERROR] El agente no está autenticado\n');
-      return;
-    }
-
-    enviarCodigoVinculacion(codigo);
-
-  } else if (comando === 'estado') {
-    console.log('\n=== Estado del Agente ===');
-    console.log(`Conectado: ${estaConectado() ? 'Sí' : 'No'}`);
-    console.log(`Autenticado: ${estaAutenticado() ? 'Sí' : 'No'}`);
-    console.log(`Workspace: ${workspaceVinculado ? workspaceVinculado.nombre : 'Sin vincular'}`);
-    console.log('');
-
-  } else if (comando === 'ayuda' || comando === 'help') {
-    console.log('\n=== Comandos disponibles ===');
-    console.log('  vincular XXXX-XXXX  - Vincular con un workspace usando código');
-    console.log('  estado              - Ver estado actual del agente');
-    console.log('  ayuda               - Mostrar esta ayuda');
-    console.log('  salir               - Cerrar el agente');
-    console.log('');
-
-  } else if (comando === 'salir' || comando === 'exit') {
-    console.log('\nCerrando agente...');
-    process.exit(0);
-
-  } else if (comando) {
-    console.log(`\n[?] Comando desconocido: ${comando}`);
-    console.log('    Escribe "ayuda" para ver comandos disponibles\n');
+  if (contadorIntervalId) {
+    clearInterval(contadorIntervalId);
+    contadorIntervalId = null;
   }
-}
 
-/**
- * Inicia la interfaz de comandos
- */
-function iniciarInterfazComandos() {
-  rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-
-  rl.on('line', (input) => {
-    procesarComando(input);
-    rl.prompt();
-  });
-
-  rl.on('close', () => {
-    console.log('\nAgente cerrado.');
-    process.exit(0);
-  });
-
-  console.log('\nEscribe "ayuda" para ver comandos disponibles.\n');
-  rl.prompt();
+  terminal.log('Polling detenido', 'advertencia');
 }
 
 /**
  * Función principal
  */
 async function main() {
-  ui.mostrarInicio();
-
   // Validar configuración
   if (!CLAVE_SECRETA) {
-    ui.errorFatal('Falta la variable CLAVE_SECRETA en el archivo .env\n\nDebes configurar la clave secreta del agente.');
+    console.error('\n[ERROR FATAL] Falta la variable CLAVE_SECRETA en el archivo .env\n');
+    console.error('Debes configurar la clave secreta del agente.\n');
     process.exit(1);
   }
 
-  // Configurar UI
-  ui.setConfiguracion({
-    modo: MODO_MODBUS,
-    intervalo: INTERVALO_LECTURA,
+  // Inicializar interfaz de terminal
+  terminal.inicializar({
+    onRecargar: async () => {
+      terminal.log('Recargando registradores...', 'ciclo');
+      detenerPolling();
+      await cargarRegistradores();
+      iniciarPolling();
+    },
+    onSalir: () => {
+      terminal.log('Cerrando agente...', 'advertencia');
+      detenerPolling();
+      cerrarConexion();
+    },
   });
+
+  // Iniciar reloj de tiempo activo
+  terminal.iniciarReloj();
+
+  // Log inicial
+  terminal.log(`Modo Modbus: ${MODO_MODBUS}`, 'info');
+  terminal.log(`Conectando al backend: ${BACKEND_URL}`, 'info');
 
   // Iniciar conexión WebSocket al backend
-  ui.log(`Conectando al backend: ${BACKEND_URL}`, 'info');
-
   iniciarConexion({
     onConectado: () => {
-      ui.log('Conectado al backend via WebSocket', 'exito');
-      ui.renderizar();
+      terminal.setConectado(true);
+      terminal.log('Conectado al backend via WebSocket', 'exito');
     },
-    onAutenticado: (agente) => {
-      ui.log(`Autenticado como: ${agente.nombre}`, 'exito');
-      ui.renderizar();
+    onAutenticado: async (agente) => {
+      terminal.setAgente(agente);
+      terminal.log(`Autenticado como: ${agente.nombre}`, 'exito');
 
-      // Si no hay workspace vinculado, esperar comando de vinculación
-      // En futuro: verificar workspaces vinculados y cargar alimentadores
+      // Cargar registradores e iniciar polling
+      await cargarRegistradores();
+
+      if (registradoresCache.length > 0) {
+        iniciarPolling();
+      }
     },
     onVinculado: (workspace) => {
-      workspaceVinculado = workspace;
-      ui.log(`Workspace vinculado: ${workspace.nombre}`, 'exito');
-      ui.renderizar();
+      terminal.setWorkspace(workspace);
+      terminal.log(`Workspace vinculado: ${workspace.nombre}`, 'exito');
     },
     onDesconectado: (reason) => {
-      ui.log(`Desconectado del backend: ${reason}`, 'advertencia');
-      ui.renderizar();
+      terminal.setConectado(false);
+      terminal.log(`Desconectado del backend: ${reason}`, 'advertencia');
     },
     onError: (error) => {
-      ui.log(`Error: ${error.message}`, 'error');
+      terminal.log(`Error: ${error.message}`, 'error');
     },
     onLog: (mensaje, tipo) => {
-      ui.log(`[WS] ${mensaje}`, tipo);
+      terminal.log(`[WS] ${mensaje}`, tipo);
     },
   });
-
-  // Iniciar interfaz de comandos
-  iniciarInterfazComandos();
 }
 
 // Manejar señales de terminación
 process.on('SIGINT', () => {
-  console.log('\n');
-  ui.log('Deteniendo agente...', 'advertencia');
-  cicloActivo = false;
+  terminal.log('Recibida señal SIGINT...', 'advertencia');
+  detenerPolling();
+  cerrarConexion();
+  terminal.destruir();
   setTimeout(() => process.exit(0), 500);
 });
 
 process.on('SIGTERM', () => {
-  ui.log('Terminando agente...', 'advertencia');
-  cicloActivo = false;
+  terminal.log('Recibida señal SIGTERM...', 'advertencia');
+  detenerPolling();
+  cerrarConexion();
+  terminal.destruir();
   setTimeout(() => process.exit(0), 500);
 });
 
 // Manejar errores no capturados
 process.on('uncaughtException', (error) => {
-  ui.errorFatal(`Error no capturado: ${error.message}`);
+  console.error(`[ERROR FATAL] Error no capturado: ${error.message}`);
+  console.error(error.stack);
   process.exit(1);
 });
 
 process.on('unhandledRejection', (reason) => {
-  ui.log(`Promesa rechazada: ${reason}`, 'error');
+  terminal.log(`Promesa rechazada: ${reason}`, 'error');
 });
 
 // Ejecutar
 main().catch((error) => {
-  ui.errorFatal(`Error fatal: ${error.message}`);
+  console.error(`[ERROR FATAL] ${error.message}`);
+  console.error(error.stack);
   process.exit(1);
 });

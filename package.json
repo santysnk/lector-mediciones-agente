@@ -26,6 +26,7 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.87.1",
     "bcrypt": "^6.0.0",
+    "blessed": "^0.1.81",
     "boxen": "^5.1.2",
     "chalk": "^4.1.2",
     "cli-table3": "^0.6.5",
