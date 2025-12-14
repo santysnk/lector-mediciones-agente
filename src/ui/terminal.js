@@ -93,7 +93,7 @@ function inicializar(opciones = {}) {
   });
 
   // ========== LOG (resto de la pantalla menos footer) ==========
-  logBox = blessed.box({
+  logBox = blessed.log({
     top: 13,
     left: 0,
     width: '100%',
@@ -114,6 +114,7 @@ function inicializar(opciones = {}) {
       track: { bg: 'gray' },
       style: { bg: 'yellow' },
     },
+    scrollOnInput: true,
   });
 
   // ========== FOOTER (1 línea) ==========
@@ -364,19 +365,7 @@ function actualizarRegistradores() {
 }
 
 function actualizarLogs() {
-  if (!logBox) return;
-
-  if (estado.logs.length === 0) {
-    logBox.setContent('{gray-fg}Sin actividad{/gray-fg}');
-    return;
-  }
-
-  // Mostrar los últimos logs (más recientes arriba)
-  const logsTexto = estado.logs
-    .slice(0, 30)
-    .join('\n');
-
-  logBox.setContent(logsTexto);
+  // No hacer nada - blessed.log maneja su propio contenido
 }
 
 function actualizarFooter() {
@@ -405,6 +394,8 @@ function formatearTiempoActivo() {
  * Registra un mensaje en el log
  */
 function log(mensaje, tipo = 'info') {
+  if (!logBox) return;
+
   const timestamp = new Date().toLocaleTimeString('es-ES', { hour12: false });
   let prefijo = '';
 
@@ -426,14 +417,10 @@ function log(mensaje, tipo = 'info') {
   }
 
   const linea = `{gray-fg}${timestamp}{/gray-fg} ${prefijo} ${mensaje}`;
-  estado.logs.unshift(linea);
 
-  // Limitar cantidad de logs
-  if (estado.logs.length > MAX_LOGS) {
-    estado.logs = estado.logs.slice(0, MAX_LOGS);
-  }
+  // Usar el metodo log() de blessed.log que maneja scroll automaticamente
+  logBox.log(linea);
 
-  actualizarLogs();
   if (screen) screen.render();
 }
 
