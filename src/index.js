@@ -118,10 +118,19 @@ function iniciarPolling() {
   }
 
   cicloActivo = true;
-  terminal.log('Iniciando polling de registradores...', 'ciclo');
 
-  // Crear un intervalo por cada registrador según su configuración
-  registradoresCache.forEach((reg) => {
+  // Filtrar solo registradores activos para polling
+  const registradoresActivos = registradoresCache.filter((r) => r.activo);
+
+  if (registradoresActivos.length === 0) {
+    terminal.log('No hay registradores activos para polling', 'advertencia');
+    return;
+  }
+
+  terminal.log(`Iniciando polling de ${registradoresActivos.length} registrador(es) activo(s)...`, 'ciclo');
+
+  // Crear un intervalo por cada registrador ACTIVO según su configuración
+  registradoresActivos.forEach((reg) => {
     const intervaloSegundos = reg.intervalo_segundos || 60;
     const intervaloMs = intervaloSegundos * 1000;
 
@@ -144,16 +153,15 @@ function iniciarPolling() {
     intervalosLectura.set(reg.id, intervalId);
   });
 
-  // Actualizar contadores cada segundo
+  // Actualizar contadores cada segundo (solo para IDs en contadoresProxLectura)
   contadorIntervalId = setInterval(() => {
     if (!cicloActivo) return;
 
-    registradoresCache.forEach((reg) => {
-      const segundos = contadoresProxLectura.get(reg.id);
+    contadoresProxLectura.forEach((segundos, regId) => {
       if (segundos > 0) {
         const nuevoValor = segundos - 1;
-        contadoresProxLectura.set(reg.id, nuevoValor);
-        terminal.actualizarRegistrador(reg.id, { proximaLectura: nuevoValor });
+        contadoresProxLectura.set(regId, nuevoValor);
+        terminal.actualizarRegistrador(regId, { proximaLectura: nuevoValor });
       }
     });
   }, 1000);

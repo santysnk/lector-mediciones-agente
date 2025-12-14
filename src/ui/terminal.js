@@ -65,9 +65,14 @@ function inicializar(opciones = {}) {
     width: '100%',
     height: 3,
     tags: true,
+    border: {
+      type: 'line',
+    },
     style: {
       fg: 'white',
-      bg: 'blue',
+      border: {
+        fg: 'cyan',
+      },
     },
   });
 
@@ -215,6 +220,36 @@ function inicializar(opciones = {}) {
     }
   });
 
+  // Teclas de flecha para scroll en registradores
+  screen.key(['up'], () => {
+    if (!estado.menuVisible) {
+      registradoresBox.scroll(-1);
+      screen.render();
+    }
+  });
+
+  screen.key(['down'], () => {
+    if (!estado.menuVisible) {
+      registradoresBox.scroll(1);
+      screen.render();
+    }
+  });
+
+  // Page Up/Down para scroll rápido
+  screen.key(['pageup'], () => {
+    if (!estado.menuVisible) {
+      registradoresBox.scroll(-5);
+      screen.render();
+    }
+  });
+
+  screen.key(['pagedown'], () => {
+    if (!estado.menuVisible) {
+      registradoresBox.scroll(5);
+      screen.render();
+    }
+  });
+
   // Renderizar inicial
   actualizarHeader();
   actualizarRegistradores();
@@ -295,23 +330,17 @@ function actualizarHeader() {
     ? '{green-fg}● Conectado{/green-fg}'
     : '{red-fg}● Desconectado{/red-fg}';
 
-  const titulo = '{bold}AGENTE MODBUS{/bold}';
-  const menu = '{yellow-fg}[m] Menú{/yellow-fg}';
-
-  // Línea 1: título y estado
-  const linea1 = `  ${titulo}                    Backend: ${estadoConexion}        ${menu}  `;
-
-  // Línea 2: agente y workspace
   const agente = estado.agenteNombre
     ? `{cyan-fg}${estado.agenteNombre}{/cyan-fg}`
-    : '{gray-fg}Sin autenticar{/gray-fg}';
+    : '{gray-fg}---{/gray-fg}';
+
   const workspace = estado.workspaceNombre
     ? `{cyan-fg}${estado.workspaceNombre}{/cyan-fg}`
-    : '{gray-fg}Sin vincular{/gray-fg}';
+    : '{gray-fg}---{/gray-fg}';
 
-  const linea2 = `  Agente: ${agente}    Workspace: ${workspace}`;
+  const linea = ` {bold}AGENTE MODBUS{/bold}  │  ${estadoConexion}  │  Agente: ${agente}  │  Workspace: ${workspace}  │  {yellow-fg}[m] Menú{/yellow-fg}`;
 
-  headerBox.setContent(`\n${linea1}\n${linea2}`);
+  headerBox.setContent(linea);
 }
 
 function actualizarRegistradores() {
@@ -325,28 +354,42 @@ function actualizarRegistradores() {
   let contenido = '\n';
 
   estado.registradores.forEach((reg) => {
-    const icono = reg.estado === 'activo'
-      ? '{green-fg}●{/green-fg}'
-      : reg.estado === 'error'
-        ? '{red-fg}●{/red-fg}'
-        : '{gray-fg}○{/gray-fg}';
+    let icono, estadoTexto;
 
-    const nombre = reg.nombre.padEnd(12);
-    const ip = `${reg.ip}:${reg.puerto}`.padEnd(20);
-    const registros = `[${reg.indiceInicial}-${reg.indiceInicial + reg.cantRegistros - 1}]`.padEnd(12);
+    if (reg.estado === 'inactivo') {
+      icono = '{gray-fg}○{/gray-fg}';
+      estadoTexto = '{gray-fg}[Inactivo]{/gray-fg}';
+    } else if (reg.estado === 'activo' || reg.estado === 'leyendo') {
+      icono = '{green-fg}●{/green-fg}';
+      estadoTexto = '{green-fg}[Activo]{/green-fg}';
+    } else if (reg.estado === 'error') {
+      icono = '{red-fg}●{/red-fg}';
+      estadoTexto = '{red-fg}[Error]{/red-fg}';
+    } else {
+      icono = '{yellow-fg}○{/yellow-fg}';
+      estadoTexto = '{yellow-fg}[Espera]{/yellow-fg}';
+    }
 
-    const proxLectura = reg.proximaLectura
-      ? `Próx: ${reg.proximaLectura}s`
-      : '-----';
+    const nombre = reg.nombre.padEnd(14);
+    const ip = `${reg.ip}:${reg.puerto}`.padEnd(22);
+    const registros = `[${reg.indiceInicial}-${reg.indiceInicial + reg.cantRegistros - 1}]`.padEnd(14);
 
-    const estadoTexto = reg.estado === 'activo'
-      ? '{green-fg}[Activo]{/green-fg}'
-      : reg.estado === 'error'
-        ? '{red-fg}[Error]{/red-fg}'
-        : '{gray-fg}[Espera]{/gray-fg}';
+    let proxLectura;
+    if (reg.estado === 'inactivo') {
+      proxLectura = '{gray-fg}---{/gray-fg}';
+    } else if (reg.proximaLectura !== null && reg.proximaLectura !== undefined) {
+      proxLectura = `Próx: ${reg.proximaLectura}s`;
+    } else {
+      proxLectura = '---';
+    }
 
-    contenido += `  ${icono} ${nombre} ${ip} ${registros} ${proxLectura.padEnd(12)} ${estadoTexto}\n`;
+    contenido += `  ${icono} ${nombre} ${ip} ${registros} ${proxLectura.toString().padEnd(12)} ${estadoTexto}\n`;
   });
+
+  // Agregar nota de scroll si hay muchos registradores
+  if (estado.registradores.length > 5) {
+    contenido += '\n  {gray-fg}[↑↓] Scroll  [PgUp/PgDn] Scroll rápido{/gray-fg}';
+  }
 
   registradoresBox.setContent(contenido);
 }
@@ -467,7 +510,8 @@ function setRegistradores(registradores) {
     indiceInicial: r.indice_inicial || r.indiceInicial || 0,
     cantRegistros: r.cantidad_registros || r.cantidadRegistros || 10,
     intervalo: r.intervalo_segundos || r.intervaloSegundos || 60,
-    estado: 'espera',
+    activo: r.activo !== false, // true por defecto
+    estado: r.activo ? 'espera' : 'inactivo',
     proximaLectura: null,
     ultimaLectura: null,
   }));

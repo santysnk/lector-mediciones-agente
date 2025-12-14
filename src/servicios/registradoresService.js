@@ -15,11 +15,12 @@ async function obtenerRegistradoresPorAgente(agenteId) {
     return [];
   }
 
+  // Obtener TODOS los registradores (activos e inactivos)
+  // El campo 'activo' indica si debe hacer polling, pero igual los mostramos
   const { data: registradores, error } = await supabase
     .from('registradores')
     .select('*')
     .eq('agente_id', agenteId)
-    .eq('activo', true)
     .order('created_at', { ascending: true });
 
   if (error) {
