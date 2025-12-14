@@ -297,7 +297,7 @@ function generarHTML() {
     </div>
 
     <div class="footer">
-      <button id="btn-apagar" class="btn-apagar" onclick="apagarAgente()">⏻ Apagar Agente</button>
+      <button id="btn-apagar" class="btn-apagar" onclick="apagarAgente()">Apagar Agente</button>
       <span>Agente Modbus v1.0 | Puerto web: ${WEB_PORT}</span>
     </div>
   </div>

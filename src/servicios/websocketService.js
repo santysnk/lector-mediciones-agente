@@ -105,6 +105,12 @@ function iniciarConexion(opciones = {}) {
       iniciarHeartbeat();
 
       if (onAutenticado) onAutenticado(datos.agente);
+
+      // Si hay workspace vinculado, notificar
+      if (datos.workspace && onVinculado) {
+        log(`Workspace vinculado: ${datos.workspace.nombre}`, 'exito');
+        onVinculado(datos.workspace);
+      }
     } else {
       autenticado = false;
       agenteData = null;
