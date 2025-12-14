@@ -20,6 +20,10 @@ const MAX_INTENTOS = 10;
 // Datos del agente autenticado
 let agenteData = null;
 
+// Intervalo del heartbeat (30 segundos)
+const PING_INTERVAL = 30000;
+let pingIntervalId = null;
+
 // Callbacks para eventos (se setean desde index.js)
 let onConectado = null;
 let onAutenticado = null;
@@ -95,6 +99,9 @@ function iniciarConexion(opciones = {}) {
         log(`ADVERTENCIA: ${datos.advertencia}`, 'advertencia');
       }
 
+      // Iniciar heartbeat (ping cada 30 segundos)
+      iniciarHeartbeat();
+
       if (onAutenticado) onAutenticado(datos.agente);
     } else {
       autenticado = false;
@@ -103,6 +110,11 @@ function iniciarConexion(opciones = {}) {
 
       if (onError) onError(new Error(datos.error));
     }
+  });
+
+  // === Evento: Respuesta al ping ===
+  socket.on('agente:pong', () => {
+    // El backend respondió al ping, conexión OK
   });
 
   // === Evento: Resultado de vinculación ===
@@ -153,6 +165,8 @@ function iniciarConexion(opciones = {}) {
   // === Evento: Desconexión ===
   socket.on('disconnect', (reason) => {
     conectado = false;
+    autenticado = false;
+    detenerHeartbeat();
     log(`Desconectado del backend: ${reason}`, 'advertencia');
 
     if (onDesconectado) onDesconectado(reason);
@@ -180,9 +194,45 @@ function iniciarConexion(opciones = {}) {
 }
 
 /**
+ * Inicia el heartbeat (ping periódico al backend)
+ */
+function iniciarHeartbeat() {
+  // Limpiar intervalo anterior si existe
+  if (pingIntervalId) {
+    clearInterval(pingIntervalId);
+  }
+
+  // Enviar ping inmediatamente
+  if (socket && socket.connected) {
+    socket.emit('agente:ping');
+  }
+
+  // Configurar ping cada 30 segundos
+  pingIntervalId = setInterval(() => {
+    if (socket && socket.connected && autenticado) {
+      socket.emit('agente:ping');
+    }
+  }, PING_INTERVAL);
+
+  log('Heartbeat iniciado (ping cada 30s)', 'info');
+}
+
+/**
+ * Detiene el heartbeat
+ */
+function detenerHeartbeat() {
+  if (pingIntervalId) {
+    clearInterval(pingIntervalId);
+    pingIntervalId = null;
+  }
+}
+
+/**
  * Cierra la conexión WebSocket
  */
 function cerrarConexion() {
+  detenerHeartbeat();
+
   if (socket) {
     socket.disconnect();
     socket = null;
