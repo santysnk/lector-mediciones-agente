@@ -50,88 +50,67 @@ function inicializar(opciones = {}) {
   screen = blessed.screen({
     smartCSR: true,
     title: 'Agente Modbus',
-    cursor: {
-      artificial: true,
-      shape: 'line',
-      blink: true,
-      color: null,
-    },
+    fullUnicode: true,
   });
 
-  // ========== HEADER ==========
+  // ========== HEADER (3 líneas con borde) ==========
   headerBox = blessed.box({
     top: 0,
     left: 0,
     width: '100%',
     height: 3,
-    border: {
-      type: 'line',
-    },
+    border: { type: 'line' },
     tags: true,
     label: ' AGENTE MODBUS ',
     style: {
       fg: 'white',
-      border: {
-        fg: 'green',
-      },
+      border: { fg: 'green' },
     },
   });
 
-  // ========== REGISTRADORES ==========
+  // ========== REGISTRADORES (40% de la pantalla) ==========
   registradoresBox = blessed.box({
     top: 3,
     left: 0,
     width: '100%',
-    height: '50%-3',
-    border: {
-      type: 'line',
-    },
+    height: '40%',
+    border: { type: 'line' },
     tags: true,
     label: ' REGISTRADORES ',
     style: {
       fg: 'white',
-      border: {
-        fg: 'cyan',
-      },
+      border: { fg: 'cyan' },
     },
     scrollable: true,
     alwaysScroll: true,
     scrollbar: {
-      ch: '│',
-      style: {
-        fg: 'cyan',
-      },
+      ch: '|',
+      style: { fg: 'cyan' },
     },
   });
 
-  // ========== LOG ==========
+  // ========== LOG (resto de la pantalla menos footer) ==========
   logBox = blessed.box({
-    top: '50%',
+    top: '40%+3',
     left: 0,
     width: '100%',
-    height: '50%-1',
-    border: {
-      type: 'line',
-    },
+    height: '60%-4',
+    border: { type: 'line' },
     tags: true,
     label: ' LOG ',
     style: {
       fg: 'white',
-      border: {
-        fg: 'green',
-      },
+      border: { fg: 'yellow' },
     },
     scrollable: true,
     alwaysScroll: true,
     scrollbar: {
-      ch: '│',
-      style: {
-        fg: 'green',
-      },
+      ch: '|',
+      style: { fg: 'yellow' },
     },
   });
 
-  // ========== FOOTER ==========
+  // ========== FOOTER (1 línea) ==========
   footerBox = blessed.box({
     bottom: 0,
     left: 0,
@@ -148,29 +127,21 @@ function inicializar(opciones = {}) {
   menuBox = blessed.list({
     top: 'center',
     left: 'center',
-    width: 25,
+    width: 30,
     height: 8,
-    border: {
-      type: 'line',
-    },
+    border: { type: 'line' },
     tags: true,
-    label: ' MENÚ ',
+    label: ' MENU ',
     style: {
       fg: 'white',
-      bg: 'black',
-      border: {
-        fg: 'yellow',
-      },
-      selected: {
-        fg: 'black',
-        bg: 'cyan',
-      },
+      border: { fg: 'yellow' },
+      selected: { fg: 'black', bg: 'cyan' },
     },
     keys: true,
     vi: false,
     items: [
       '  Recargar registradores',
-      '  Estado',
+      '  Ver estado',
       '  Ayuda',
       '  Salir',
     ],
@@ -299,25 +270,21 @@ function ejecutarOpcionMenu(index) {
 }
 
 function mostrarEstado() {
-  log('═══════════════════════════════════════', 'info');
-  log(`  Agente: ${estado.agenteNombre || 'No autenticado'}`, 'info');
-  log(`  Workspace: ${estado.workspaceNombre || 'No vinculado'}`, 'info');
-  log(`  Conectado: ${estado.conectado ? 'Sí' : 'No'}`, estado.conectado ? 'exito' : 'error');
-  log(`  Registradores: ${estado.registradores.length}`, 'info');
-  log(`  Tiempo activo: ${formatearTiempoActivo()}`, 'info');
-  log('═══════════════════════════════════════', 'info');
+  log('--- ESTADO ---', 'info');
+  log(`Agente: ${estado.agenteNombre || 'No autenticado'}`, 'info');
+  log(`Workspace: ${estado.workspaceNombre || 'No vinculado'}`, 'info');
+  log(`Conectado: ${estado.conectado ? 'Si' : 'No'}`, estado.conectado ? 'exito' : 'error');
+  log(`Registradores: ${estado.registradores.length}`, 'info');
+  log(`Tiempo activo: ${formatearTiempoActivo()}`, 'info');
 }
 
 function mostrarAyuda() {
-  log('═══════════════════════════════════════', 'info');
-  log('  ATAJOS DE TECLADO:', 'info');
-  log('  [m] Abrir/cerrar menú', 'info');
-  log('  [q] Salir del agente', 'info');
-  log('  [Ctrl+C] Salir del agente', 'info');
-  log('  [Esc] Cerrar menú', 'info');
-  log('  [↑↓] Navegar menú', 'info');
-  log('  [Enter] Seleccionar opción', 'info');
-  log('═══════════════════════════════════════', 'info');
+  log('--- ATAJOS ---', 'info');
+  log('[m] Abrir/cerrar menu', 'info');
+  log('[q] Salir del agente', 'info');
+  log('[Ctrl+C] Salir del agente', 'info');
+  log('[Esc] Cerrar menu', 'info');
+  log('[Up/Down] Scroll registradores', 'info');
 }
 
 // ============================================
@@ -328,8 +295,8 @@ function actualizarHeader() {
   if (!headerBox) return;
 
   const estadoConexion = estado.conectado
-    ? '{green-fg}● Conectado{/green-fg}'
-    : '{red-fg}● Desconectado{/red-fg}';
+    ? '{green-fg}Conectado{/green-fg}'
+    : '{red-fg}Desconectado{/red-fg}';
 
   const agente = estado.agenteNombre
     ? `{cyan-fg}${estado.agenteNombre}{/cyan-fg}`
@@ -339,7 +306,7 @@ function actualizarHeader() {
     ? `{cyan-fg}${estado.workspaceNombre}{/cyan-fg}`
     : '{gray-fg}Sin vincular{/gray-fg}';
 
-  const linea = ` Backend: ${estadoConexion}  │  Agente: ${agente}  │  Workspace: ${workspace}  │  {yellow-fg}[m] Menú{/yellow-fg}`;
+  const linea = ` Backend: ${estadoConexion}  |  Agente: ${agente}  |  Workspace: ${workspace}  |  {yellow-fg}[m] Menu{/yellow-fg}`;
 
   headerBox.setContent(linea);
 }
@@ -348,49 +315,44 @@ function actualizarRegistradores() {
   if (!registradoresBox) return;
 
   if (estado.registradores.length === 0) {
-    registradoresBox.setContent('\n  {gray-fg}No hay registradores configurados{/gray-fg}');
+    registradoresBox.setContent('{gray-fg}  No hay registradores configurados{/gray-fg}');
     return;
   }
 
-  let contenido = '\n';
+  let contenido = '';
 
   estado.registradores.forEach((reg) => {
     let icono, estadoTexto;
 
     if (reg.estado === 'inactivo') {
-      icono = '{gray-fg}○{/gray-fg}';
+      icono = '{gray-fg}o{/gray-fg}';
       estadoTexto = '{gray-fg}[Inactivo]{/gray-fg}';
     } else if (reg.estado === 'activo' || reg.estado === 'leyendo') {
-      icono = '{green-fg}●{/green-fg}';
+      icono = '{green-fg}*{/green-fg}';
       estadoTexto = '{green-fg}[Activo]{/green-fg}';
     } else if (reg.estado === 'error') {
-      icono = '{red-fg}●{/red-fg}';
+      icono = '{red-fg}x{/red-fg}';
       estadoTexto = '{red-fg}[Error]{/red-fg}';
     } else {
-      icono = '{yellow-fg}○{/yellow-fg}';
+      icono = '{yellow-fg}o{/yellow-fg}';
       estadoTexto = '{yellow-fg}[Espera]{/yellow-fg}';
     }
 
-    const nombre = reg.nombre.padEnd(14);
-    const ip = `${reg.ip}:${reg.puerto}`.padEnd(22);
-    const registros = `[${reg.indiceInicial}-${reg.indiceInicial + reg.cantRegistros - 1}]`.padEnd(14);
+    const nombre = (reg.nombre || 'Sin nombre').substring(0, 12).padEnd(12);
+    const ip = `${reg.ip}:${reg.puerto}`.padEnd(20);
+    const registros = `[${reg.indiceInicial}-${reg.indiceInicial + reg.cantRegistros - 1}]`.padEnd(12);
 
     let proxLectura;
     if (reg.estado === 'inactivo') {
       proxLectura = '{gray-fg}---{/gray-fg}';
     } else if (reg.proximaLectura !== null && reg.proximaLectura !== undefined) {
-      proxLectura = `Próx: ${reg.proximaLectura}s`;
+      proxLectura = `{white-fg}${reg.proximaLectura}s{/white-fg}`;
     } else {
       proxLectura = '---';
     }
 
-    contenido += `  ${icono} ${nombre} ${ip} ${registros} ${proxLectura.toString().padEnd(12)} ${estadoTexto}\n`;
+    contenido += ` ${icono} ${nombre} ${ip} ${registros} ${proxLectura.padEnd(8)} ${estadoTexto}\n`;
   });
-
-  // Agregar nota de scroll si hay muchos registradores
-  if (estado.registradores.length > 5) {
-    contenido += '\n  {gray-fg}[↑↓] Scroll  [PgUp/PgDn] Scroll rápido{/gray-fg}';
-  }
 
   registradoresBox.setContent(contenido);
 }
@@ -399,17 +361,17 @@ function actualizarLogs() {
   if (!logBox) return;
 
   if (estado.logs.length === 0) {
-    logBox.setContent('\n  {gray-fg}Sin actividad{/gray-fg}');
+    logBox.setContent('{gray-fg}  Sin actividad{/gray-fg}');
     return;
   }
 
   // Mostrar los últimos logs (más recientes arriba)
   const logsTexto = estado.logs
     .slice(0, 20)
-    .map((log) => `  ${log}`)
+    .map((l) => ` ${l}`)
     .join('\n');
 
-  logBox.setContent('\n' + logsTexto);
+  logBox.setContent(logsTexto);
   logBox.setScrollPerc(100);
 }
 
@@ -417,7 +379,7 @@ function actualizarFooter() {
   if (!footerBox) return;
 
   const tiempo = formatearTiempoActivo();
-  footerBox.setContent(`  Tiempo activo: ${tiempo}  |  Presiona [m] para menú  |  [q] Salir`);
+  footerBox.setContent(` Tiempo activo: ${tiempo}  |  [m] Menu  |  [q] Salir`);
 }
 
 function formatearTiempoActivo() {
@@ -444,22 +406,22 @@ function log(mensaje, tipo = 'info') {
 
   switch (tipo) {
     case 'exito':
-      prefijo = '{green-fg}✓{/green-fg}';
+      prefijo = '{green-fg}OK{/green-fg}';
       break;
     case 'error':
-      prefijo = '{red-fg}✗{/red-fg}';
+      prefijo = '{red-fg}ERR{/red-fg}';
       break;
     case 'advertencia':
       prefijo = '{yellow-fg}!{/yellow-fg}';
       break;
     case 'ciclo':
-      prefijo = '{cyan-fg}↻{/cyan-fg}';
+      prefijo = '{cyan-fg}>{/cyan-fg}';
       break;
     default:
-      prefijo = '{white-fg}•{/white-fg}';
+      prefijo = '{white-fg}-{/white-fg}';
   }
 
-  const linea = `{gray-fg}${timestamp}{/gray-fg}  ${prefijo} ${mensaje}`;
+  const linea = `{gray-fg}${timestamp}{/gray-fg} ${prefijo} ${mensaje}`;
   estado.logs.unshift(linea);
 
   // Limitar cantidad de logs
@@ -511,7 +473,7 @@ function setRegistradores(registradores) {
     indiceInicial: r.indice_inicial || r.indiceInicial || 0,
     cantRegistros: r.cantidad_registros || r.cantidadRegistros || 10,
     intervalo: r.intervalo_segundos || r.intervaloSegundos || 60,
-    activo: r.activo !== false, // true por defecto
+    activo: r.activo !== false,
     estado: r.activo ? 'espera' : 'inactivo',
     proximaLectura: null,
     ultimaLectura: null,
