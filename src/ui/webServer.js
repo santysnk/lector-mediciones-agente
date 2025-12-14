@@ -259,7 +259,7 @@ function generarHTML() {
 
   <script>
     // Actualización sin recarga de página
-    let lastLogCount = 0;
+    let ultimoLogCount = 0;
 
     async function actualizarEstado() {
       try {
@@ -281,16 +281,23 @@ function generarHTML() {
         document.getElementById('registradores-count').textContent = estado.registradores.length;
         document.getElementById('registradores-body').innerHTML = generarRegistradoresHTML(estado.registradores);
 
-        // Actualizar logs (solo si hay nuevos, preservando scroll)
+        // Actualizar logs SOLO si hay nuevos (para preservar scroll)
         const logsContainer = document.getElementById('logs-container');
-        const wasAtBottom = logsContainer.scrollHeight - logsContainer.scrollTop <= logsContainer.clientHeight + 50;
+        if (estado.logs.length !== ultimoLogCount) {
+          // Guardar posición actual del scroll
+          const scrollPos = logsContainer.scrollTop;
+          const scrollHeight = logsContainer.scrollHeight;
 
-        document.getElementById('logs-count').textContent = estado.logs.length;
-        document.getElementById('logs-container').innerHTML = generarLogsHTML(estado.logs);
+          // Actualizar contenido
+          document.getElementById('logs-count').textContent = estado.logs.length;
+          logsContainer.innerHTML = generarLogsHTML(estado.logs);
 
-        // Si estaba al final, mantener al final
-        if (wasAtBottom) {
-          logsContainer.scrollTop = 0; // Los logs están en orden inverso (más reciente arriba)
+          // Restaurar posición del scroll (ajustando por el nuevo contenido)
+          const newScrollHeight = logsContainer.scrollHeight;
+          const diff = newScrollHeight - scrollHeight;
+          logsContainer.scrollTop = scrollPos + diff;
+
+          ultimoLogCount = estado.logs.length;
         }
 
         indicator.classList.remove('updating');
