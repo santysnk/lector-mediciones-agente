@@ -7,17 +7,26 @@ const { testConexionModbus } = require('../modbus/clienteModbus');
 // URL del backend (configurable via .env)
 const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:3001';
 
+// Clave secreta del agente (obligatoria)
+const CLAVE_SECRETA = process.env.CLAVE_SECRETA;
+
 // Estado de la conexión
 let socket = null;
 let conectado = false;
+let autenticado = false;
 let intentosReconexion = 0;
 const MAX_INTENTOS = 10;
 
+// Datos del agente autenticado
+let agenteData = null;
+
 // Callbacks para eventos (se setean desde index.js)
 let onConectado = null;
+let onAutenticado = null;
 let onDesconectado = null;
 let onError = null;
 let onLog = null;
+let onVinculado = null;
 
 /**
  * Función auxiliar para logging
@@ -34,13 +43,20 @@ function log(mensaje, tipo = 'info') {
  * Inicia la conexión WebSocket al backend
  */
 function iniciarConexion(opciones = {}) {
-  const { agenteId, configuracionId } = opciones;
+  // Validar que existe la clave secreta
+  if (!CLAVE_SECRETA) {
+    log('ERROR: Falta la variable CLAVE_SECRETA en .env', 'error');
+    if (opciones.onError) opciones.onError(new Error('Falta CLAVE_SECRETA'));
+    return null;
+  }
 
   // Configurar callbacks si se proporcionan
   if (opciones.onConectado) onConectado = opciones.onConectado;
+  if (opciones.onAutenticado) onAutenticado = opciones.onAutenticado;
   if (opciones.onDesconectado) onDesconectado = opciones.onDesconectado;
   if (opciones.onError) onError = opciones.onError;
   if (opciones.onLog) onLog = opciones.onLog;
+  if (opciones.onVinculado) onVinculado = opciones.onVinculado;
 
   log(`Conectando a backend: ${BACKEND_URL}`, 'info');
 
@@ -55,21 +71,48 @@ function iniciarConexion(opciones = {}) {
   // === Evento: Conexión establecida ===
   socket.on('connect', () => {
     conectado = true;
+    autenticado = false;
     intentosReconexion = 0;
     log(`Conectado al backend (socket: ${socket.id})`, 'exito');
 
-    // Registrar el agente
-    socket.emit('agente:registrar', {
-      agenteId: agenteId || `agente-${Date.now()}`,
-      configuracionId,
+    // Autenticar el agente con la clave secreta
+    log('Autenticando agente...', 'info');
+    socket.emit('agente:autenticar', {
+      claveSecreta: CLAVE_SECRETA,
     });
 
     if (onConectado) onConectado();
   });
 
-  // === Evento: Agente registrado ===
-  socket.on('agente:registrado', (datos) => {
-    log(`Agente registrado en backend: ${datos.mensaje}`, 'exito');
+  // === Evento: Resultado de autenticación ===
+  socket.on('agente:autenticado', (datos) => {
+    if (datos.exito) {
+      autenticado = true;
+      agenteData = datos.agente;
+      log(`Autenticado como: ${datos.agente.nombre}`, 'exito');
+
+      if (datos.advertencia) {
+        log(`ADVERTENCIA: ${datos.advertencia}`, 'advertencia');
+      }
+
+      if (onAutenticado) onAutenticado(datos.agente);
+    } else {
+      autenticado = false;
+      agenteData = null;
+      log(`Error de autenticación: ${datos.error}`, 'error');
+
+      if (onError) onError(new Error(datos.error));
+    }
+  });
+
+  // === Evento: Resultado de vinculación ===
+  socket.on('agente:vinculado', (datos) => {
+    if (datos.exito) {
+      log(`Vinculado a workspace: ${datos.workspace.nombre}`, 'exito');
+      if (onVinculado) onVinculado(datos.workspace);
+    } else {
+      log(`Error de vinculación: ${datos.error}`, 'error');
+    }
   });
 
   // === Evento: Solicitud de test de conexión Modbus ===
@@ -156,16 +199,53 @@ function estaConectado() {
 }
 
 /**
+ * Verifica si está autenticado
+ */
+function estaAutenticado() {
+  return autenticado && agenteData !== null;
+}
+
+/**
+ * Obtiene los datos del agente autenticado
+ */
+function obtenerDatosAgente() {
+  return agenteData;
+}
+
+/**
  * Obtiene el ID del socket actual
  */
 function obtenerSocketId() {
   return socket ? socket.id : null;
 }
 
+/**
+ * Envía un código de vinculación al backend
+ * @param {string} codigo - Código de 8 caracteres (XXXX-XXXX)
+ */
+function enviarCodigoVinculacion(codigo) {
+  if (!socket || !socket.connected) {
+    log('No conectado al backend', 'error');
+    return false;
+  }
+
+  if (!autenticado) {
+    log('Agente no autenticado', 'error');
+    return false;
+  }
+
+  log(`Enviando código de vinculación: ${codigo}`, 'info');
+  socket.emit('agente:vincular', { codigo });
+  return true;
+}
+
 module.exports = {
   iniciarConexion,
   cerrarConexion,
   estaConectado,
+  estaAutenticado,
+  obtenerDatosAgente,
   obtenerSocketId,
+  enviarCodigoVinculacion,
   BACKEND_URL,
 };

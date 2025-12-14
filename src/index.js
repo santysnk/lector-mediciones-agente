@@ -6,16 +6,27 @@ require('dotenv').config();
 const { leerRegistrosModbus, MODO_MODBUS } = require('./modbus/clienteModbus');
 const { obtenerAlimentadores } = require('./servicios/alimentadoresService');
 const { guardarLecturasBatch } = require('./servicios/lecturasService');
-const { iniciarConexion, estaConectado, BACKEND_URL } = require('./servicios/websocketService');
+const {
+  iniciarConexion,
+  estaConectado,
+  estaAutenticado,
+  enviarCodigoVinculacion,
+  BACKEND_URL,
+} = require('./servicios/websocketService');
 const ui = require('./ui/consola');
+const readline = require('readline');
 
 // Configuración
-const CONFIGURACION_ID = process.env.CONFIGURACION_ID;
+const CLAVE_SECRETA = process.env.CLAVE_SECRETA;
 const INTERVALO_LECTURA = Number(process.env.INTERVALO_LECTURA) || 60;
 
 // Estado del agente
 let alimentadoresCache = [];
 let cicloActivo = false;
+let workspaceVinculado = null;
+
+// Interfaz de readline para comandos
+let rl = null;
 
 /**
  * Carga o recarga la lista de alimentadores desde Supabase
@@ -150,14 +161,87 @@ async function iniciarPolling() {
 }
 
 /**
+ * Procesa comandos del usuario
+ */
+function procesarComando(input) {
+  const comando = input.trim().toLowerCase();
+
+  if (comando.startsWith('vincular ')) {
+    const codigo = input.trim().substring(9).toUpperCase();
+    if (codigo.length !== 9 || codigo[4] !== '-') {
+      console.log('\n[ERROR] Formato de código inválido. Usa: vincular XXXX-XXXX\n');
+      return;
+    }
+
+    if (!estaConectado()) {
+      console.log('\n[ERROR] No estás conectado al backend\n');
+      return;
+    }
+
+    if (!estaAutenticado()) {
+      console.log('\n[ERROR] El agente no está autenticado\n');
+      return;
+    }
+
+    enviarCodigoVinculacion(codigo);
+
+  } else if (comando === 'estado') {
+    console.log('\n=== Estado del Agente ===');
+    console.log(`Conectado: ${estaConectado() ? 'Sí' : 'No'}`);
+    console.log(`Autenticado: ${estaAutenticado() ? 'Sí' : 'No'}`);
+    console.log(`Workspace: ${workspaceVinculado ? workspaceVinculado.nombre : 'Sin vincular'}`);
+    console.log('');
+
+  } else if (comando === 'ayuda' || comando === 'help') {
+    console.log('\n=== Comandos disponibles ===');
+    console.log('  vincular XXXX-XXXX  - Vincular con un workspace usando código');
+    console.log('  estado              - Ver estado actual del agente');
+    console.log('  ayuda               - Mostrar esta ayuda');
+    console.log('  salir               - Cerrar el agente');
+    console.log('');
+
+  } else if (comando === 'salir' || comando === 'exit') {
+    console.log('\nCerrando agente...');
+    process.exit(0);
+
+  } else if (comando) {
+    console.log(`\n[?] Comando desconocido: ${comando}`);
+    console.log('    Escribe "ayuda" para ver comandos disponibles\n');
+  }
+}
+
+/**
+ * Inicia la interfaz de comandos
+ */
+function iniciarInterfazComandos() {
+  rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  rl.on('line', (input) => {
+    procesarComando(input);
+    rl.prompt();
+  });
+
+  rl.on('close', () => {
+    console.log('\nAgente cerrado.');
+    process.exit(0);
+  });
+
+  console.log('\nEscribe "ayuda" para ver comandos disponibles.\n');
+  rl.prompt();
+}
+
+/**
  * Función principal
  */
 async function main() {
   ui.mostrarInicio();
 
   // Validar configuración
-  if (!CONFIGURACION_ID) {
-    ui.errorFatal('Falta la variable CONFIGURACION_ID en el archivo .env\n\nDebes especificar qué configuración va a monitorear este agente.');
+  if (!CLAVE_SECRETA) {
+    ui.errorFatal('Falta la variable CLAVE_SECRETA en el archivo .env\n\nDebes configurar la clave secreta del agente.');
     process.exit(1);
   }
 
@@ -165,19 +249,26 @@ async function main() {
   ui.setConfiguracion({
     modo: MODO_MODBUS,
     intervalo: INTERVALO_LECTURA,
-    configuracionId: CONFIGURACION_ID,
   });
-
-  ui.log(`Configuración: ${CONFIGURACION_ID.substring(0, 8)}...`, 'info');
 
   // Iniciar conexión WebSocket al backend
   ui.log(`Conectando al backend: ${BACKEND_URL}`, 'info');
 
   iniciarConexion({
-    agenteId: `agente-${CONFIGURACION_ID.substring(0, 8)}`,
-    configuracionId: CONFIGURACION_ID,
     onConectado: () => {
       ui.log('Conectado al backend via WebSocket', 'exito');
+      ui.renderizar();
+    },
+    onAutenticado: (agente) => {
+      ui.log(`Autenticado como: ${agente.nombre}`, 'exito');
+      ui.renderizar();
+
+      // Si no hay workspace vinculado, esperar comando de vinculación
+      // En futuro: verificar workspaces vinculados y cargar alimentadores
+    },
+    onVinculado: (workspace) => {
+      workspaceVinculado = workspace;
+      ui.log(`Workspace vinculado: ${workspace.nombre}`, 'exito');
       ui.renderizar();
     },
     onDesconectado: (reason) => {
@@ -185,34 +276,15 @@ async function main() {
       ui.renderizar();
     },
     onError: (error) => {
-      ui.log(`Error WebSocket: ${error.message}`, 'error');
+      ui.log(`Error: ${error.message}`, 'error');
     },
     onLog: (mensaje, tipo) => {
       ui.log(`[WS] ${mensaje}`, tipo);
     },
   });
 
-  // === TEMPORALMENTE DESACTIVADO PARA PRUEBAS DE TEST CONEXIÓN ===
-  // // Cargar alimentadores
-  // const cargaExitosa = await cargarAlimentadores();
-
-  // if (!cargaExitosa) {
-  //   ui.errorFatal('No se pudo iniciar: no hay alimentadores configurados para esta configuración.');
-  //   process.exit(1);
-  // }
-
-  // // Mostrar estado inicial
-  // ui.renderizar();
-
-  // // Esperar un momento para que el usuario vea el estado inicial
-  // await new Promise(resolve => setTimeout(resolve, 2000));
-
-  // // Iniciar polling
-  // await iniciarPolling();
-  // === FIN TEMPORALMENTE DESACTIVADO ===
-
-  // Solo mantener WebSocket activo para tests manuales
-  console.log('\n[MODO TEST] Agente en modo solo WebSocket - esperando comandos de test...\n');
+  // Iniciar interfaz de comandos
+  iniciarInterfazComandos();
 }
 
 // Manejar señales de terminación
