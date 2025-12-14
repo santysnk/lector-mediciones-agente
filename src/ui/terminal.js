@@ -51,6 +51,7 @@ function inicializar(opciones = {}) {
     smartCSR: true,
     title: 'Agente Modbus',
     fullUnicode: true,
+    mouse: true,
   });
 
   // ========== HEADER (3 líneas con borde) ==========
