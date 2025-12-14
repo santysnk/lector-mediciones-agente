@@ -68,12 +68,12 @@ function inicializar(opciones = {}) {
     },
   });
 
-  // ========== REGISTRADORES (40% de la pantalla) ==========
+  // ========== REGISTRADORES (altura fija 10 lineas) ==========
   registradoresBox = blessed.box({
     top: 3,
     left: 0,
     width: '100%',
-    height: '40%',
+    height: 10,
     border: { type: 'line' },
     tags: true,
     label: ' REGISTRADORES ',
@@ -83,18 +83,21 @@ function inicializar(opciones = {}) {
     },
     scrollable: true,
     alwaysScroll: true,
+    mouse: true,
+    keys: true,
     scrollbar: {
-      ch: '|',
-      style: { fg: 'cyan' },
+      ch: ' ',
+      track: { bg: 'gray' },
+      style: { bg: 'cyan' },
     },
   });
 
   // ========== LOG (resto de la pantalla menos footer) ==========
   logBox = blessed.box({
-    top: '40%+3',
+    top: 13,
     left: 0,
     width: '100%',
-    height: '60%-4',
+    height: '100%-14',
     border: { type: 'line' },
     tags: true,
     label: ' LOG ',
@@ -104,9 +107,12 @@ function inicializar(opciones = {}) {
     },
     scrollable: true,
     alwaysScroll: true,
+    mouse: true,
+    keys: true,
     scrollbar: {
-      ch: '|',
-      style: { fg: 'yellow' },
+      ch: ' ',
+      track: { bg: 'gray' },
+      style: { bg: 'yellow' },
     },
   });
 
@@ -315,7 +321,7 @@ function actualizarRegistradores() {
   if (!registradoresBox) return;
 
   if (estado.registradores.length === 0) {
-    registradoresBox.setContent('{gray-fg}  No hay registradores configurados{/gray-fg}');
+    registradoresBox.setContent('{gray-fg}No hay registradores configurados{/gray-fg}');
     return;
   }
 
@@ -338,20 +344,20 @@ function actualizarRegistradores() {
       estadoTexto = '{yellow-fg}[Espera]{/yellow-fg}';
     }
 
-    const nombre = (reg.nombre || 'Sin nombre').substring(0, 12).padEnd(12);
-    const ip = `${reg.ip}:${reg.puerto}`.padEnd(20);
-    const registros = `[${reg.indiceInicial}-${reg.indiceInicial + reg.cantRegistros - 1}]`.padEnd(12);
+    const nombre = (reg.nombre || 'Sin nombre').substring(0, 14).padEnd(14);
+    const ip = `${reg.ip}:${reg.puerto}`.padEnd(22);
+    const registros = `[${reg.indiceInicial}-${reg.indiceInicial + reg.cantRegistros - 1}]`.padEnd(14);
 
     let proxLectura;
     if (reg.estado === 'inactivo') {
-      proxLectura = '{gray-fg}---{/gray-fg}';
+      proxLectura = '---'.padEnd(6);
     } else if (reg.proximaLectura !== null && reg.proximaLectura !== undefined) {
-      proxLectura = `{white-fg}${reg.proximaLectura}s{/white-fg}`;
+      proxLectura = `${reg.proximaLectura}s`.padEnd(6);
     } else {
-      proxLectura = '---';
+      proxLectura = '---'.padEnd(6);
     }
 
-    contenido += ` ${icono} ${nombre} ${ip} ${registros} ${proxLectura.padEnd(8)} ${estadoTexto}\n`;
+    contenido += `${icono} ${nombre} ${ip} ${registros} ${proxLectura} ${estadoTexto}\n`;
   });
 
   registradoresBox.setContent(contenido);
@@ -361,18 +367,16 @@ function actualizarLogs() {
   if (!logBox) return;
 
   if (estado.logs.length === 0) {
-    logBox.setContent('{gray-fg}  Sin actividad{/gray-fg}');
+    logBox.setContent('{gray-fg}Sin actividad{/gray-fg}');
     return;
   }
 
   // Mostrar los últimos logs (más recientes arriba)
   const logsTexto = estado.logs
-    .slice(0, 20)
-    .map((l) => ` ${l}`)
+    .slice(0, 30)
     .join('\n');
 
   logBox.setContent(logsTexto);
-  logBox.setScrollPerc(100);
 }
 
 function actualizarFooter() {
@@ -401,15 +405,15 @@ function formatearTiempoActivo() {
  * Registra un mensaje en el log
  */
 function log(mensaje, tipo = 'info') {
-  const timestamp = new Date().toLocaleTimeString();
+  const timestamp = new Date().toLocaleTimeString('es-ES', { hour12: false });
   let prefijo = '';
 
   switch (tipo) {
     case 'exito':
-      prefijo = '{green-fg}OK{/green-fg}';
+      prefijo = '{green-fg}+{/green-fg}';
       break;
     case 'error':
-      prefijo = '{red-fg}ERR{/red-fg}';
+      prefijo = '{red-fg}!{/red-fg}';
       break;
     case 'advertencia':
       prefijo = '{yellow-fg}!{/yellow-fg}';
