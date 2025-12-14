@@ -63,17 +63,23 @@ function inicializar(opciones = {}) {
     top: 0,
     left: 0,
     width: '100%',
-    height: 1,
+    height: 3,
+    border: {
+      type: 'line',
+    },
     tags: true,
+    label: ' AGENTE MODBUS ',
     style: {
       fg: 'white',
-      bg: 'black',
+      border: {
+        fg: 'green',
+      },
     },
   });
 
   // ========== REGISTRADORES ==========
   registradoresBox = blessed.box({
-    top: 1,
+    top: 3,
     left: 0,
     width: '100%',
     height: '50%-3',
@@ -331,9 +337,9 @@ function actualizarHeader() {
 
   const workspace = estado.workspaceNombre
     ? `{cyan-fg}${estado.workspaceNombre}{/cyan-fg}`
-    : '{gray-fg}---{/gray-fg}';
+    : '{gray-fg}Sin vincular{/gray-fg}';
 
-  const linea = ` {bold}AGENTE MODBUS{/bold}  │  ${estadoConexion}  │  Agente: ${agente}  │  Workspace: ${workspace}  │  {yellow-fg}[m] Menú{/yellow-fg}`;
+  const linea = ` Backend: ${estadoConexion}  │  Agente: ${agente}  │  Workspace: ${workspace}  │  {yellow-fg}[m] Menú{/yellow-fg}`;
 
   headerBox.setContent(linea);
 }
