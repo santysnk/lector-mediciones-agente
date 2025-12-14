@@ -229,6 +229,26 @@ function inicializar(opciones = {}) {
     }
   });
 
+  // Redirigir console.log y console.error a blessed
+  const originalLog = console.log;
+  const originalError = console.error;
+
+  console.log = (...args) => {
+    const mensaje = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+    if (logBox) {
+      logBox.log(`{gray-fg}[console]{/gray-fg} ${mensaje}`);
+      if (screen) screen.render();
+    }
+  };
+
+  console.error = (...args) => {
+    const mensaje = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+    if (logBox) {
+      logBox.log(`{red-fg}[error]{/red-fg} ${mensaje}`);
+      if (screen) screen.render();
+    }
+  };
+
   // Renderizar inicial
   actualizarHeader();
   actualizarRegistradores();
