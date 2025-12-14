@@ -68,7 +68,6 @@ function generarHTML() {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="refresh" content="2">
   <title>Agente Modbus</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -196,6 +195,9 @@ function generarHTML() {
       font-size: 0.75rem;
       color: #00d9ff;
     }
+    .refresh-indicator.updating {
+      color: #00ff88;
+    }
   </style>
 </head>
 <body>
@@ -207,25 +209,25 @@ function generarHTML() {
       <div class="status-bar">
         <div class="status-item">
           <span class="label">Backend:</span>
-          <span class="value ${estadoClase}">${estadoConexion}</span>
+          <span id="estado-conexion" class="value ${estadoClase}">${estadoConexion}</span>
         </div>
         <div class="status-item">
           <span class="label">Agente:</span>
-          <span class="value info">${estado.agenteNombre || '---'}</span>
+          <span id="agente-nombre" class="value info">${estado.agenteNombre || '---'}</span>
         </div>
         <div class="status-item">
           <span class="label">Workspace:</span>
-          <span class="value info">${estado.workspaceNombre || 'Sin vincular'}</span>
+          <span id="workspace-nombre" class="value info">${estado.workspaceNombre || 'Sin vincular'}</span>
         </div>
         <div class="status-item">
           <span class="label">Tiempo activo:</span>
-          <span class="value info">${tiempoActivo}</span>
+          <span id="tiempo-activo" class="value info">${tiempoActivo}</span>
         </div>
       </div>
     </div>
 
     <div class="section">
-      <h2>📊 Registradores (${estado.registradores.length})</h2>
+      <h2>📊 Registradores (<span id="registradores-count">${estado.registradores.length}</span>)</h2>
       <table>
         <thead>
           <tr>
@@ -237,15 +239,15 @@ function generarHTML() {
             <th>Estado</th>
           </tr>
         </thead>
-        <tbody>
+        <tbody id="registradores-body">
           ${registradoresHTML}
         </tbody>
       </table>
     </div>
 
     <div class="section">
-      <h2>📝 Log (últimos ${estado.logs.length} mensajes)</h2>
-      <div class="logs-container">
+      <h2>📝 Log (últimos <span id="logs-count">${estado.logs.length}</span> mensajes)</h2>
+      <div id="logs-container" class="logs-container">
         ${logsHTML}
       </div>
     </div>
@@ -254,6 +256,106 @@ function generarHTML() {
       Agente Modbus v1.0 | Puerto web: ${WEB_PORT} | Presiona Ctrl+C en la terminal para detener
     </div>
   </div>
+
+  <script>
+    // Actualización sin recarga de página
+    let lastLogCount = 0;
+
+    async function actualizarEstado() {
+      try {
+        const indicator = document.querySelector('.refresh-indicator');
+        indicator.classList.add('updating');
+        indicator.textContent = 'Actualizando...';
+
+        const response = await fetch('/api/estado');
+        const estado = await response.json();
+
+        // Actualizar header
+        document.getElementById('estado-conexion').textContent = estado.conectado ? 'Conectado' : 'Desconectado';
+        document.getElementById('estado-conexion').className = 'value ' + (estado.conectado ? 'conectado' : 'desconectado');
+        document.getElementById('agente-nombre').textContent = estado.agenteNombre || '---';
+        document.getElementById('workspace-nombre').textContent = estado.workspaceNombre || 'Sin vincular';
+        document.getElementById('tiempo-activo').textContent = formatearTiempo(estado.iniciado);
+
+        // Actualizar registradores
+        document.getElementById('registradores-count').textContent = estado.registradores.length;
+        document.getElementById('registradores-body').innerHTML = generarRegistradoresHTML(estado.registradores);
+
+        // Actualizar logs (solo si hay nuevos, preservando scroll)
+        const logsContainer = document.getElementById('logs-container');
+        const wasAtBottom = logsContainer.scrollHeight - logsContainer.scrollTop <= logsContainer.clientHeight + 50;
+
+        document.getElementById('logs-count').textContent = estado.logs.length;
+        document.getElementById('logs-container').innerHTML = generarLogsHTML(estado.logs);
+
+        // Si estaba al final, mantener al final
+        if (wasAtBottom) {
+          logsContainer.scrollTop = 0; // Los logs están en orden inverso (más reciente arriba)
+        }
+
+        indicator.classList.remove('updating');
+        indicator.textContent = 'Auto-refresh: 2s';
+
+      } catch (error) {
+        console.error('Error actualizando:', error);
+        document.querySelector('.refresh-indicator').textContent = 'Error de conexión';
+      }
+    }
+
+    function formatearTiempo(iniciado) {
+      if (!iniciado) return '--:--:--';
+      const diff = Math.floor((Date.now() - new Date(iniciado).getTime()) / 1000);
+      const horas = Math.floor(diff / 3600).toString().padStart(2, '0');
+      const minutos = Math.floor((diff % 3600) / 60).toString().padStart(2, '0');
+      const segundos = (diff % 60).toString().padStart(2, '0');
+      return horas + ':' + minutos + ':' + segundos;
+    }
+
+    function generarRegistradoresHTML(registradores) {
+      if (registradores.length === 0) {
+        return '<tr><td colspan="6" class="empty">No hay registradores configurados</td></tr>';
+      }
+      return registradores.map(reg => {
+        let estadoClase = 'espera';
+        if (reg.estado === 'inactivo') estadoClase = 'inactivo';
+        else if (reg.estado === 'activo' || reg.estado === 'leyendo') estadoClase = 'activo';
+        else if (reg.estado === 'error') estadoClase = 'error';
+
+        const proxLectura = reg.estado === 'inactivo' ? '---' :
+          (reg.proximaLectura !== null ? reg.proximaLectura + 's' : '---');
+
+        return '<tr class="' + estadoClase + '">' +
+          '<td>' + (reg.nombre || 'Sin nombre') + '</td>' +
+          '<td>' + reg.ip + ':' + reg.puerto + '</td>' +
+          '<td>[' + reg.indiceInicial + '-' + (reg.indiceInicial + reg.cantRegistros - 1) + ']</td>' +
+          '<td>' + reg.intervalo + 's</td>' +
+          '<td>' + proxLectura + '</td>' +
+          '<td><span class="badge ' + estadoClase + '">' + (reg.estado || 'espera') + '</span></td>' +
+          '</tr>';
+      }).join('');
+    }
+
+    function generarLogsHTML(logs) {
+      if (logs.length === 0) {
+        return '<div class="log-entry info"><span class="timestamp"></span><span class="mensaje">Sin logs todavía...</span></div>';
+      }
+      return logs.map(log =>
+        '<div class="log-entry ' + log.tipo + '">' +
+        '<span class="timestamp">' + log.timestamp + '</span>' +
+        '<span class="mensaje">' + escapeHTML(log.mensaje) + '</span>' +
+        '</div>'
+      ).join('');
+    }
+
+    function escapeHTML(str) {
+      const div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    }
+
+    // Actualizar cada 2 segundos
+    setInterval(actualizarEstado, 2000);
+  </script>
 </body>
 </html>`;
 }
