@@ -2,6 +2,7 @@
 // Servidor HTTP local para interfaz web del agente
 
 const http = require('http');
+const { exec } = require('child_process');
 
 // Puerto para la interfaz web (configurable via .env)
 const WEB_PORT = process.env.WEB_PORT || 8080;
@@ -301,7 +302,17 @@ function inicializar(opciones = {}) {
   });
 
   server.listen(WEB_PORT, () => {
-    console.log(`[WebUI] Interfaz web disponible en http://localhost:${WEB_PORT}`);
+    const url = `http://localhost:${WEB_PORT}`;
+    console.log(`[WebUI] Interfaz web disponible en ${url}`);
+
+    // Abrir navegador automáticamente (solo en Windows)
+    if (process.platform === 'win32') {
+      exec(`start ${url}`);
+    } else if (process.platform === 'darwin') {
+      exec(`open ${url}`);
+    } else {
+      exec(`xdg-open ${url}`);
+    }
   });
 
   return server;
