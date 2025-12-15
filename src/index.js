@@ -5,6 +5,7 @@ require('dotenv').config();
 
 const { leerRegistrosModbus, MODO_MODBUS } = require('./modbus/clienteModbus');
 const { obtenerRegistradoresPorAgente, guardarLectura } = require('./servicios/registradoresService');
+const { cambiarNombre } = require('./servicios/agentesService');
 const {
   iniciarConexion,
   cerrarConexion,
@@ -215,6 +216,9 @@ async function main() {
       terminal.log('Cerrando agente...', 'advertencia');
       detenerPolling();
       cerrarConexion();
+    },
+    onCambiarNombre: async (agenteId, nuevoNombre) => {
+      return await cambiarNombre(agenteId, nuevoNombre);
     },
   });
 

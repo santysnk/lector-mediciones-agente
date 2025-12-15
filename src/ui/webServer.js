@@ -11,6 +11,7 @@ const WEB_PORT = process.env.WEB_PORT || 8080;
 const estado = {
   conectado: false,
   autenticado: false,
+  agenteId: null,
   agenteNombre: null,
   workspaceNombre: null,
   registradores: [],
@@ -22,6 +23,7 @@ const MAX_LOGS = 100;
 
 let server = null;
 let onSalir = null;
+let onCambiarNombre = null;
 
 // ============================================
 // HTML Template
@@ -109,6 +111,16 @@ function generarHTML() {
     .status-item .value.conectado { color: #00ff88; }
     .status-item .value.desconectado { color: #ff4757; }
     .status-item .value.info { color: #00d9ff; }
+    .btn-editar {
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      font-size: 0.9rem;
+      opacity: 0.6;
+      transition: opacity 0.2s;
+      padding: 2px 6px;
+    }
+    .btn-editar:hover { opacity: 1; }
 
     /* Registradores */
     .section {
@@ -255,6 +267,7 @@ function generarHTML() {
         <div class="status-item">
           <span class="label">Agente:</span>
           <span id="agente-nombre" class="value info">${estado.agenteNombre || '---'}</span>
+          <button class="btn-editar" onclick="editarNombre()" title="Editar nombre">✏️</button>
         </div>
         <div class="status-item">
           <span class="label">Workspace:</span>
@@ -434,6 +447,34 @@ function generarHTML() {
       }
     }
 
+    // Editar nombre del agente
+    async function editarNombre() {
+      const nombreActual = document.getElementById('agente-nombre').textContent;
+      const nuevoNombre = prompt('Ingresa el nuevo nombre del agente:', nombreActual);
+
+      if (!nuevoNombre || nuevoNombre.trim() === '' || nuevoNombre === nombreActual) return;
+
+      try {
+        const response = await fetch('/api/cambiar-nombre', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ nombre: nuevoNombre.trim() })
+        });
+
+        const resultado = await response.json();
+
+        if (resultado.ok) {
+          document.getElementById('agente-nombre').textContent = nuevoNombre.trim();
+          alert('Nombre actualizado correctamente');
+        } else {
+          alert('Error: ' + (resultado.error || 'No se pudo cambiar el nombre'));
+        }
+      } catch (error) {
+        console.error('Error cambiando nombre:', error);
+        alert('Error al cambiar el nombre');
+      }
+    }
+
     // Actualizar cada 2 segundos
     setInterval(actualizarEstado, 2000);
   </script>
@@ -471,8 +512,9 @@ function formatearTiempoActivo() {
 function inicializar(opciones = {}) {
   estado.iniciado = new Date();
 
-  // Guardar callback de salida
+  // Guardar callbacks
   if (opciones.onSalir) onSalir = opciones.onSalir;
+  if (opciones.onCambiarNombre) onCambiarNombre = opciones.onCambiarNombre;
 
   server = http.createServer((req, res) => {
     if (req.url === '/' || req.url === '/index.html') {
@@ -497,6 +539,39 @@ function inicializar(opciones = {}) {
       } else {
         setTimeout(() => process.exit(0), 100);
       }
+    } else if (req.url === '/api/cambiar-nombre' && req.method === 'POST') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', async () => {
+        try {
+          const { nombre } = JSON.parse(body);
+          if (!nombre || nombre.trim() === '') {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, error: 'Nombre vacío' }));
+            return;
+          }
+          if (!estado.agenteId) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, error: 'Agente no autenticado' }));
+            return;
+          }
+          if (onCambiarNombre) {
+            const resultado = await onCambiarNombre(estado.agenteId, nombre.trim());
+            if (resultado.ok) {
+              estado.agenteNombre = nombre.trim();
+              log(`Nombre cambiado a: ${nombre.trim()}`, 'exito');
+            }
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(resultado));
+          } else {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, error: 'Función no disponible' }));
+          }
+        } catch (error) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: error.message }));
+        }
+      });
     } else {
       res.writeHead(404);
       res.end('Not Found');
@@ -551,6 +626,7 @@ function setConectado(conectado) {
 
 function setAgente(agente) {
   estado.autenticado = !!agente;
+  estado.agenteId = agente?.id || null;
   estado.agenteNombre = agente?.nombre || null;
 }
 
