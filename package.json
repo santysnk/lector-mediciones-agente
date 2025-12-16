@@ -1,7 +1,7 @@
 {
   "name": "lector-mediciones-agente",
-  "version": "1.0.0",
-  "description": "Agente de lecturas Modbus para red cerrada - Lee dispositivos cada 60s y guarda en Supabase",
+  "version": "2.0.0",
+  "description": "Agente de lecturas Modbus - Comunica con backend via REST API",
   "main": "src/index.js",
   "bin": "src/index.js",
   "scripts": {
@@ -19,21 +19,19 @@
     "modbus",
     "mediciones",
     "agente",
-    "supabase"
+    "rest"
   ],
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@supabase/supabase-js": "^2.87.1",
-    "bcrypt": "^6.0.0",
     "blessed": "^0.1.81",
     "boxen": "^5.1.2",
     "chalk": "^4.1.2",
     "cli-table3": "^0.6.5",
     "dotenv": "^17.2.3",
+    "express": "^4.18.2",
     "modbus-serial": "^8.0.23",
     "ora": "^5.4.1",
-    "pkg": "^5.8.1",
-    "socket.io-client": "^4.8.1"
+    "pkg": "^5.8.1"
   }
 }

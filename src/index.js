@@ -4,14 +4,16 @@
 require('dotenv').config();
 
 const { leerRegistrosModbus, MODO_MODBUS } = require('./modbus/clienteModbus');
-const { obtenerRegistradoresPorAgente, guardarLectura } = require('./servicios/registradoresService');
 const { cambiarNombre } = require('./servicios/agentesService');
 const {
   iniciarConexion,
   cerrarConexion,
   obtenerDatosAgente,
+  obtenerConfiguracion,
+  enviarLecturas,
   BACKEND_URL,
-} = require('./servicios/websocketService');
+} = require('./servicios/restService');
+
 // Interfaz: 'web' para navegador, 'terminal' para blessed
 const INTERFAZ = process.env.INTERFAZ || 'web';
 const terminal = INTERFAZ === 'terminal'
@@ -29,7 +31,7 @@ let contadoresProxLectura = new Map(); // Map de registradorId -> segundos resta
 let contadorIntervalId = null;
 
 /**
- * Carga los registradores desde Supabase
+ * Carga los registradores desde el backend via REST
  */
 async function cargarRegistradores() {
   const agente = obtenerDatosAgente();
@@ -39,25 +41,46 @@ async function cargarRegistradores() {
     return [];
   }
 
-  terminal.log('Cargando registradores desde Supabase...', 'info');
+  terminal.log('Cargando registradores desde el backend...', 'info');
 
-  const registradores = await obtenerRegistradoresPorAgente(agente.id);
+  try {
+    const config = await obtenerConfiguracion();
+    const registradores = config.registradores || [];
 
-  if (registradores.length === 0) {
-    terminal.log('No hay registradores configurados para este agente', 'advertencia');
-  } else {
-    const activos = registradores.filter(r => r.activo).length;
-    terminal.log(`${registradores.length} registrador(es) cargados (${activos} activos)`, 'exito');
+    if (registradores.length === 0) {
+      terminal.log('No hay registradores configurados para este agente', 'advertencia');
+    } else {
+      const activos = registradores.filter(r => r.activo !== false).length;
+      terminal.log(`${registradores.length} registrador(es) cargados (${activos} activos)`, 'exito');
+    }
+
+    // Transformar formato de respuesta al formato interno
+    registradoresCache = registradores.map(r => ({
+      id: r.id,
+      nombre: r.nombre,
+      tipo: r.tipo,
+      ip: r.ip,
+      puerto: r.puerto,
+      unit_id: r.unitId,
+      indice_inicial: r.indiceInicial,
+      cantidad_registros: r.cantidadRegistros,
+      intervalo_segundos: r.intervaloSegundos,
+      timeout_ms: r.timeoutMs,
+      activo: r.activo !== false,
+      alimentador: r.alimentador,
+    }));
+
+    terminal.setRegistradores(registradoresCache);
+
+    return registradoresCache;
+  } catch (error) {
+    terminal.log(`Error cargando registradores: ${error.message}`, 'error');
+    return [];
   }
-
-  registradoresCache = registradores;
-  terminal.setRegistradores(registradores);
-
-  return registradores;
 }
 
 /**
- * Lee un registrador Modbus y guarda la lectura
+ * Lee un registrador Modbus y envía la lectura al backend
  */
 async function leerRegistrador(registrador) {
   const inicio = Date.now();
@@ -75,15 +98,16 @@ async function leerRegistrador(registrador) {
 
     const tiempoMs = Date.now() - inicio;
 
-    // Guardar en Supabase
-    const resultado = await guardarLectura(
-      registrador.tabla_lecturas,
-      registrador.id,
-      valores,
-      registrador.indice_inicial
-    );
+    // Enviar lectura al backend via REST
+    const resultado = await enviarLecturas([{
+      registradorId: registrador.id,
+      valores: Array.from(valores),
+      tiempoMs,
+      exito: true,
+      timestamp: new Date().toISOString(),
+    }]);
 
-    if (resultado.exito) {
+    if (resultado.ok) {
       terminal.actualizarRegistrador(registrador.id, { estado: 'activo' });
       terminal.log(
         `${registrador.nombre}: ${valores.length} registros (${tiempoMs}ms)`,
@@ -92,7 +116,7 @@ async function leerRegistrador(registrador) {
     } else {
       terminal.actualizarRegistrador(registrador.id, { estado: 'error' });
       terminal.log(
-        `${registrador.nombre}: Error guardando - ${resultado.error}`,
+        `${registrador.nombre}: Error enviando lectura`,
         'error'
       );
     }
@@ -100,6 +124,22 @@ async function leerRegistrador(registrador) {
     return { exito: true, valores };
 
   } catch (error) {
+    const tiempoMs = Date.now() - inicio;
+
+    // Reportar error al backend
+    try {
+      await enviarLecturas([{
+        registradorId: registrador.id,
+        valores: [],
+        tiempoMs,
+        exito: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      }]);
+    } catch (e) {
+      // Ignorar errores al reportar el error
+    }
+
     terminal.actualizarRegistrador(registrador.id, { estado: 'error' });
     terminal.log(
       `${registrador.nombre}: ${error.message}`,
@@ -229,11 +269,11 @@ async function main() {
   terminal.log(`Modo Modbus: ${MODO_MODBUS}`, 'info');
   terminal.log(`Conectando al backend: ${BACKEND_URL}`, 'info');
 
-  // Iniciar conexión WebSocket al backend
+  // Iniciar conexión REST al backend
   iniciarConexion({
     onConectado: () => {
       terminal.setConectado(true);
-      terminal.log('Conectado al backend via WebSocket', 'exito');
+      terminal.log('Conectado al backend via REST', 'exito');
     },
     onAutenticado: async (agente) => {
       terminal.setAgente(agente);
@@ -258,7 +298,7 @@ async function main() {
       terminal.log(`Error: ${error.message}`, 'error');
     },
     onLog: (mensaje, tipo) => {
-      terminal.log(`[WS] ${mensaje}`, tipo);
+      terminal.log(`[REST] ${mensaje}`, tipo);
     },
     onRegistradoresActualizar: async () => {
       // Recargar registradores cuando cambian desde el frontend

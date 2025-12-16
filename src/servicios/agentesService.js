@@ -1,31 +1,28 @@
 // src/servicios/agentesService.js
-// Servicio para operaciones del agente en Supabase
+// Servicio para operaciones del agente via REST
 
-const supabase = require('../config/supabase');
+const { enviarLog } = require('./restService');
 
 /**
- * Actualiza el nombre del agente en la base de datos
+ * Actualiza el nombre del agente
+ * NOTA: Esta operación ahora debería hacerse desde el frontend.
+ * El agente solo puede reportar logs al backend.
  * @param {string} agenteId - ID del agente
  * @param {string} nuevoNombre - Nuevo nombre para el agente
  * @returns {Promise<{ok: boolean, error?: string}>}
  */
 async function cambiarNombre(agenteId, nuevoNombre) {
-  try {
-    const { error } = await supabase
-      .from('agentes')
-      .update({ nombre: nuevoNombre })
-      .eq('id', agenteId);
+  // Por seguridad, el agente no puede cambiar su propio nombre directamente
+  // Esta operación debe hacerse desde el frontend con autenticación de usuario
+  console.log('[AgentesService] Cambio de nombre debe hacerse desde el frontend');
 
-    if (error) {
-      console.error('[AgentesService] Error actualizando nombre:', error);
-      return { ok: false, error: error.message };
-    }
+  // Registrar intento en logs
+  await enviarLog('info', `Intento de cambio de nombre a: ${nuevoNombre}`, { agenteId });
 
-    return { ok: true };
-  } catch (error) {
-    console.error('[AgentesService] Error:', error);
-    return { ok: false, error: error.message };
-  }
+  return {
+    ok: false,
+    error: 'El cambio de nombre debe realizarse desde el panel de administración'
+  };
 }
 
 module.exports = {
