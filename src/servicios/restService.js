@@ -7,8 +7,8 @@ const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:3001';
 // Clave secreta del agente (obligatoria)
 const CLAVE_SECRETA = process.env.CLAVE_SECRETA;
 
-// Intervalo de polling para configuración (ms)
-const CONFIG_POLL_INTERVAL = parseInt(process.env.CONFIG_POLL_INTERVAL_MS) || 30000;
+// Intervalo de polling para configuración (ms) - cada 10 segundos
+const CONFIG_POLL_INTERVAL = parseInt(process.env.CONFIG_POLL_INTERVAL_MS) || 10000;
 
 // Intervalo de heartbeat (ms)
 const HEARTBEAT_INTERVAL = 30000;
@@ -292,7 +292,7 @@ function iniciarConfigPolling() {
 
   // Configurar intervalo
   configPollIntervalId = setInterval(pollConfiguracion, CONFIG_POLL_INTERVAL);
-  log(`Polling de configuración iniciado (cada ${CONFIG_POLL_INTERVAL / 1000}s)`, 'info');
+  log(`Polling de configuración iniciado (cada ${CONFIG_POLL_INTERVAL / 1000}s)`, 'ciclo');
 }
 
 /**

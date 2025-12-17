@@ -3,7 +3,7 @@
 
 require('dotenv').config();
 
-const { leerRegistrosModbus, MODO_MODBUS } = require('./modbus/clienteModbus');
+const { leerRegistrosModbus } = require('./modbus/clienteModbus');
 const { cambiarNombre } = require('./servicios/agentesService');
 const {
   iniciarConexion,
@@ -266,7 +266,6 @@ async function main() {
   terminal.iniciarReloj();
 
   // Log inicial
-  terminal.log(`Modo Modbus: ${MODO_MODBUS}`, 'info');
   terminal.log(`Conectando al backend: ${BACKEND_URL}`, 'info');
 
   // Iniciar conexión REST al backend

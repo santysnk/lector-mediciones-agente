@@ -3,8 +3,6 @@
 
 const ModbusRTU = require('modbus-serial');
 
-const MODO_MODBUS = process.env.MODO_MODBUS || 'simulado';
-
 /**
  * Lee registros holding de un dispositivo Modbus TCP
  *
@@ -27,16 +25,6 @@ async function leerRegistrosModbus({ ip, puerto, indiceInicial, cantRegistros, u
     return null;
   }
 
-  // === MODO SIMULADO ===
-  if (MODO_MODBUS === 'simulado') {
-    // Generar valores aleatorios para pruebas
-    const valores = Array.from({ length: cantidad }, () =>
-      Math.floor(Math.random() * 501)
-    );
-    return valores;
-  }
-
-  // === MODO REAL ===
   const cliente = new ModbusRTU();
 
   try {
@@ -51,7 +39,7 @@ async function leerRegistrosModbus({ ip, puerto, indiceInicial, cantRegistros, u
     return respuesta.data;
   } catch (error) {
     console.error(`[Modbus] Error leyendo ${ip}:${puertoNum} - ${error.message}`);
-    return null;
+    throw error;
   } finally {
     // Siempre cerrar la conexión
     try {
@@ -87,25 +75,6 @@ async function testConexionModbus({ ip, puerto, unitId = 1, indiceInicial = 0, c
     };
   }
 
-  // === MODO SIMULADO ===
-  if (MODO_MODBUS === 'simulado') {
-    // Simular un pequeño delay como si fuera conexión real
-    await new Promise(resolve => setTimeout(resolve, 100 + Math.random() * 200));
-    // Generar valores simulados
-    const registros = Array.from({ length: cantidad }, (_, i) => ({
-      indice: inicio + i,
-      direccion: inicio + i,
-      valor: Math.floor(Math.random() * 65536),
-    }));
-    return {
-      exito: true,
-      tiempoMs: Math.floor(100 + Math.random() * 200),
-      mensaje: 'Conexión simulada exitosa',
-      registros,
-    };
-  }
-
-  // === MODO REAL ===
   const cliente = new ModbusRTU();
   const tiempoInicio = Date.now();
 
@@ -150,4 +119,4 @@ async function testConexionModbus({ ip, puerto, unitId = 1, indiceInicial = 0, c
   }
 }
 
-module.exports = { leerRegistrosModbus, testConexionModbus, MODO_MODBUS };
+module.exports = { leerRegistrosModbus, testConexionModbus };

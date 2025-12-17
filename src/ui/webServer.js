@@ -2,10 +2,15 @@
 // Servidor HTTP local para interfaz web del agente
 
 const http = require('http');
+const fs = require('fs');
+const path = require('path');
 const { exec } = require('child_process');
 
 // Puerto para la interfaz web (configurable via .env)
 const WEB_PORT = process.env.WEB_PORT || 8080;
+
+// Ruta al archivo .env
+const ENV_PATH = path.resolve(process.cwd(), '.env');
 
 // Estado global compartido
 const estado = {
@@ -13,10 +18,11 @@ const estado = {
   autenticado: false,
   agenteId: null,
   agenteNombre: null,
-  workspaceNombre: null,
+  workspaces: [], // Array de workspaces vinculados
   registradores: [],
   logs: [],
   iniciado: null,
+  claveConfigurada: !!process.env.CLAVE_SECRETA,
 };
 
 const MAX_LOGS = 100;
@@ -24,6 +30,7 @@ const MAX_LOGS = 100;
 let server = null;
 let onSalir = null;
 let onCambiarNombre = null;
+let onReconectar = null;
 
 // ============================================
 // HTML Template
@@ -33,6 +40,13 @@ function generarHTML() {
   const tiempoActivo = formatearTiempoActivo();
   const estadoConexion = estado.conectado ? 'Conectado' : 'Desconectado';
   const estadoClase = estado.conectado ? 'conectado' : 'desconectado';
+
+  // Mostrar workspaces vinculados
+  const workspacesTexto = estado.workspaces.length === 0
+    ? 'Sin vincular'
+    : estado.workspaces.length === 1
+      ? estado.workspaces[0].nombre
+      : `${estado.workspaces.length} workspaces`;
 
   const registradoresHTML = estado.registradores.length === 0
     ? '<tr><td colspan="6" class="empty">No hay registradores configurados</td></tr>'
@@ -91,10 +105,29 @@ function generarHTML() {
       margin-bottom: 20px;
       border: 1px solid #0f3460;
     }
+    .header-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 15px;
+    }
     .header h1 {
       color: #00d9ff;
-      margin-bottom: 15px;
       font-size: 1.5rem;
+    }
+    .btn-config {
+      background: #0f3460;
+      color: #00d9ff;
+      border: 1px solid #00d9ff;
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.85rem;
+      transition: all 0.2s;
+    }
+    .btn-config:hover {
+      background: #00d9ff;
+      color: #16213e;
     }
     .status-bar {
       display: flex;
@@ -121,6 +154,117 @@ function generarHTML() {
       padding: 2px 6px;
     }
     .btn-editar:hover { opacity: 1; }
+
+    /* Modal */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0,0,0,0.8);
+      z-index: 1000;
+      justify-content: center;
+      align-items: center;
+    }
+    .modal-overlay.active { display: flex; }
+    .modal {
+      background: #16213e;
+      border-radius: 12px;
+      padding: 24px;
+      width: 90%;
+      max-width: 500px;
+      border: 1px solid #0f3460;
+    }
+    .modal h2 {
+      color: #00d9ff;
+      margin-bottom: 8px;
+      font-size: 1.2rem;
+    }
+    .modal p {
+      color: #888;
+      font-size: 0.9rem;
+      margin-bottom: 20px;
+    }
+    .modal-field {
+      margin-bottom: 16px;
+    }
+    .modal-field label {
+      display: block;
+      color: #aaa;
+      font-size: 0.85rem;
+      margin-bottom: 6px;
+    }
+    .modal-field input {
+      width: 100%;
+      padding: 12px;
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      color: #eee;
+      font-size: 0.95rem;
+      font-family: monospace;
+    }
+    .modal-field input:focus {
+      outline: none;
+      border-color: #00d9ff;
+    }
+    .modal-actions {
+      display: flex;
+      gap: 12px;
+      justify-content: flex-end;
+      margin-top: 20px;
+    }
+    .modal-actions button {
+      padding: 10px 20px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      transition: all 0.2s;
+    }
+    .btn-cancelar {
+      background: transparent;
+      border: 1px solid #666;
+      color: #888;
+    }
+    .btn-cancelar:hover {
+      border-color: #aaa;
+      color: #aaa;
+    }
+    .btn-guardar {
+      background: #00d9ff;
+      border: none;
+      color: #16213e;
+      font-weight: 600;
+    }
+    .btn-guardar:hover {
+      background: #00b8d9;
+    }
+    .btn-guardar:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .modal-error {
+      background: #ff475720;
+      border: 1px solid #ff4757;
+      color: #ff4757;
+      padding: 10px;
+      border-radius: 6px;
+      margin-top: 12px;
+      font-size: 0.85rem;
+      display: none;
+    }
+    .modal-success {
+      background: #00ff8820;
+      border: 1px solid #00ff88;
+      color: #00ff88;
+      padding: 10px;
+      border-radius: 6px;
+      margin-top: 12px;
+      font-size: 0.85rem;
+      display: none;
+    }
 
     /* Registradores */
     .section {
@@ -251,14 +395,64 @@ function generarHTML() {
     .refresh-indicator.updating {
       color: #00ff88;
     }
+
+    /* Sin clave configurada */
+    .no-clave-banner {
+      background: #ff475730;
+      border: 1px solid #ff4757;
+      color: #ff4757;
+      padding: 15px 20px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .no-clave-banner span { font-weight: 500; }
   </style>
 </head>
 <body>
   <div class="refresh-indicator">Auto-refresh: 2s</div>
 
+  <!-- Modal de Configuración -->
+  <div id="modal-config" class="modal-overlay">
+    <div class="modal">
+      <h2>Configurar Clave del Agente</h2>
+      <p>Ingresa la clave secreta generada desde el Panel Admin del frontend.</p>
+
+      <div class="modal-field">
+        <label>Clave Secreta</label>
+        <input type="text" id="input-clave" placeholder="Ej: 2f0f87f5d86134a3376cfb05524deb2fc..." autocomplete="off">
+      </div>
+
+      <div class="modal-field">
+        <label>URL del Backend</label>
+        <input type="text" id="input-backend" value="${process.env.BACKEND_URL || 'https://lector-mediciones-backend.onrender.com'}" placeholder="https://...">
+      </div>
+
+      <div id="modal-error" class="modal-error"></div>
+      <div id="modal-success" class="modal-success"></div>
+
+      <div class="modal-actions">
+        <button class="btn-cancelar" onclick="cerrarModal()">Cancelar</button>
+        <button id="btn-guardar-config" class="btn-guardar" onclick="guardarConfiguracion()">Guardar y Reiniciar</button>
+      </div>
+    </div>
+  </div>
+
   <div class="container">
+    ${!estado.claveConfigurada ? `
+    <div class="no-clave-banner">
+      <span>⚠️ No hay clave configurada. El agente no puede conectarse al backend.</span>
+      <button class="btn-config" onclick="abrirModal()">Configurar Clave</button>
+    </div>
+    ` : ''}
+
     <div class="header">
-      <h1>🔌 Agente Modbus</h1>
+      <div class="header-top">
+        <h1>🔌 Agente Modbus</h1>
+        <button class="btn-config" onclick="abrirModal()">⚙️ Configuración</button>
+      </div>
       <div class="status-bar">
         <div class="status-item">
           <span class="label">Backend:</span>
@@ -270,8 +464,8 @@ function generarHTML() {
           <button class="btn-editar" onclick="editarNombre()" title="Editar nombre">✏️</button>
         </div>
         <div class="status-item">
-          <span class="label">Workspace:</span>
-          <span id="workspace-nombre" class="value info">${estado.workspaceNombre || 'Sin vincular'}</span>
+          <span class="label">Workspaces:</span>
+          <span id="workspaces-info" class="value info">${workspacesTexto}</span>
         </div>
         <div class="status-item">
           <span class="label">Tiempo activo:</span>
@@ -311,11 +505,84 @@ function generarHTML() {
 
     <div class="footer">
       <button id="btn-apagar" class="btn-apagar" onclick="apagarAgente()">Apagar Agente</button>
-      <span>Agente Modbus v1.0 | Puerto web: ${WEB_PORT}</span>
+      <span>Agente Modbus v2.0 | Puerto web: ${WEB_PORT}</span>
     </div>
   </div>
 
   <script>
+    // Modal
+    function abrirModal() {
+      document.getElementById('modal-config').classList.add('active');
+      document.getElementById('modal-error').style.display = 'none';
+      document.getElementById('modal-success').style.display = 'none';
+    }
+
+    function cerrarModal() {
+      document.getElementById('modal-config').classList.remove('active');
+    }
+
+    async function guardarConfiguracion() {
+      const clave = document.getElementById('input-clave').value.trim();
+      const backend = document.getElementById('input-backend').value.trim();
+      const errorDiv = document.getElementById('modal-error');
+      const successDiv = document.getElementById('modal-success');
+      const btnGuardar = document.getElementById('btn-guardar-config');
+
+      errorDiv.style.display = 'none';
+      successDiv.style.display = 'none';
+
+      if (!clave) {
+        errorDiv.textContent = 'La clave secreta es requerida';
+        errorDiv.style.display = 'block';
+        return;
+      }
+
+      if (clave.length < 32) {
+        errorDiv.textContent = 'La clave parece muy corta. Debe ser de al menos 64 caracteres.';
+        errorDiv.style.display = 'block';
+        return;
+      }
+
+      if (!backend) {
+        errorDiv.textContent = 'La URL del backend es requerida';
+        errorDiv.style.display = 'block';
+        return;
+      }
+
+      btnGuardar.disabled = true;
+      btnGuardar.textContent = 'Guardando...';
+
+      try {
+        const response = await fetch('/api/guardar-config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ clave, backend })
+        });
+
+        const resultado = await response.json();
+
+        if (resultado.ok) {
+          successDiv.textContent = 'Configuración guardada. Reiniciando agente...';
+          successDiv.style.display = 'block';
+
+          // Reiniciar después de 2 segundos
+          setTimeout(() => {
+            fetch('/api/reiniciar', { method: 'POST' });
+          }, 2000);
+        } else {
+          errorDiv.textContent = resultado.error || 'Error al guardar';
+          errorDiv.style.display = 'block';
+          btnGuardar.disabled = false;
+          btnGuardar.textContent = 'Guardar y Reiniciar';
+        }
+      } catch (error) {
+        errorDiv.textContent = 'Error de conexión: ' + error.message;
+        errorDiv.style.display = 'block';
+        btnGuardar.disabled = false;
+        btnGuardar.textContent = 'Guardar y Reiniciar';
+      }
+    }
+
     // Actualización sin recarga de página
     let ultimoLogCount = 0;
 
@@ -332,7 +599,19 @@ function generarHTML() {
         document.getElementById('estado-conexion').textContent = estado.conectado ? 'Conectado' : 'Desconectado';
         document.getElementById('estado-conexion').className = 'value ' + (estado.conectado ? 'conectado' : 'desconectado');
         document.getElementById('agente-nombre').textContent = estado.agenteNombre || '---';
-        document.getElementById('workspace-nombre').textContent = estado.workspaceNombre || 'Sin vincular';
+
+        // Actualizar workspaces
+        const workspacesInfo = document.getElementById('workspaces-info');
+        if (estado.workspaces && estado.workspaces.length > 0) {
+          workspacesInfo.textContent = estado.workspaces.length === 1
+            ? estado.workspaces[0].nombre
+            : estado.workspaces.length + ' workspaces';
+          workspacesInfo.title = estado.workspaces.map(w => w.nombre).join(', ');
+        } else {
+          workspacesInfo.textContent = 'Sin vincular';
+          workspacesInfo.title = '';
+        }
+
         document.getElementById('tiempo-activo').textContent = formatearTiempo(estado.iniciado);
 
         // Actualizar registradores
@@ -342,15 +621,12 @@ function generarHTML() {
         // Actualizar logs SOLO si hay nuevos (para preservar scroll)
         const logsContainer = document.getElementById('logs-container');
         if (estado.logs.length !== ultimoLogCount) {
-          // Guardar posición actual del scroll
           const scrollPos = logsContainer.scrollTop;
           const scrollHeight = logsContainer.scrollHeight;
 
-          // Actualizar contenido
           document.getElementById('logs-count').textContent = estado.logs.length;
           logsContainer.innerHTML = generarLogsHTML(estado.logs);
 
-          // Restaurar posición del scroll (ajustando por el nuevo contenido)
           const newScrollHeight = logsContainer.scrollHeight;
           const diff = newScrollHeight - scrollHeight;
           logsContainer.scrollTop = scrollPos + diff;
@@ -505,6 +781,45 @@ function formatearTiempoActivo() {
   return `${horas}:${minutos}:${segundos}`;
 }
 
+/**
+ * Guarda la configuración en el archivo .env
+ */
+function guardarEnv(clave, backend) {
+  try {
+    let contenido = '';
+
+    // Leer .env existente si existe
+    if (fs.existsSync(ENV_PATH)) {
+      contenido = fs.readFileSync(ENV_PATH, 'utf8');
+    }
+
+    // Actualizar o agregar CLAVE_SECRETA
+    if (contenido.includes('CLAVE_SECRETA=')) {
+      contenido = contenido.replace(/CLAVE_SECRETA=.*/, `CLAVE_SECRETA=${clave}`);
+    } else {
+      contenido += `\nCLAVE_SECRETA=${clave}`;
+    }
+
+    // Actualizar o agregar BACKEND_URL
+    if (contenido.includes('BACKEND_URL=')) {
+      contenido = contenido.replace(/BACKEND_URL=.*/, `BACKEND_URL=${backend}`);
+    } else {
+      contenido += `\nBACKEND_URL=${backend}`;
+    }
+
+    // Asegurar que tenga INTERFAZ=web
+    if (!contenido.includes('INTERFAZ=')) {
+      contenido += `\nINTERFAZ=web`;
+    }
+
+    fs.writeFileSync(ENV_PATH, contenido.trim() + '\n');
+    return true;
+  } catch (error) {
+    console.error('[WebUI] Error guardando .env:', error);
+    return false;
+  }
+}
+
 // ============================================
 // Servidor HTTP
 // ============================================
@@ -515,22 +830,29 @@ function inicializar(opciones = {}) {
   // Guardar callbacks
   if (opciones.onSalir) onSalir = opciones.onSalir;
   if (opciones.onCambiarNombre) onCambiarNombre = opciones.onCambiarNombre;
+  if (opciones.onReconectar) onReconectar = opciones.onReconectar;
 
   server = http.createServer((req, res) => {
+    // Página principal
     if (req.url === '/' || req.url === '/index.html') {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(generarHTML());
-    } else if (req.url === '/api/estado') {
+    }
+    // API: Estado actual
+    else if (req.url === '/api/estado') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(estado));
-    } else if (req.url === '/api/limpiar-logs' && req.method === 'POST') {
+    }
+    // API: Limpiar logs
+    else if (req.url === '/api/limpiar-logs' && req.method === 'POST') {
       estado.logs = [];
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true }));
-    } else if (req.url === '/api/apagar' && req.method === 'POST') {
+    }
+    // API: Apagar
+    else if (req.url === '/api/apagar' && req.method === 'POST') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true }));
-      // Ejecutar callback de salida si existe
       if (onSalir) {
         setTimeout(() => {
           onSalir();
@@ -539,7 +861,9 @@ function inicializar(opciones = {}) {
       } else {
         setTimeout(() => process.exit(0), 100);
       }
-    } else if (req.url === '/api/cambiar-nombre' && req.method === 'POST') {
+    }
+    // API: Cambiar nombre
+    else if (req.url === '/api/cambiar-nombre' && req.method === 'POST') {
       let body = '';
       req.on('data', chunk => { body += chunk; });
       req.on('end', async () => {
@@ -572,7 +896,64 @@ function inicializar(opciones = {}) {
           res.end(JSON.stringify({ ok: false, error: error.message }));
         }
       });
-    } else {
+    }
+    // API: Guardar configuración
+    else if (req.url === '/api/guardar-config' && req.method === 'POST') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const { clave, backend } = JSON.parse(body);
+
+          if (!clave || clave.trim() === '') {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, error: 'Clave vacía' }));
+            return;
+          }
+
+          const guardado = guardarEnv(clave.trim(), backend.trim());
+
+          if (guardado) {
+            estado.claveConfigurada = true;
+            log('Configuración guardada en .env', 'exito');
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true }));
+          } else {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, error: 'Error escribiendo archivo .env' }));
+          }
+        } catch (error) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: error.message }));
+        }
+      });
+    }
+    // API: Reiniciar agente
+    else if (req.url === '/api/reiniciar' && req.method === 'POST') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+
+      log('Reiniciando agente...', 'advertencia');
+
+      // Cerrar conexiones y reiniciar el proceso
+      setTimeout(() => {
+        if (onSalir) onSalir();
+
+        // Reiniciar el proceso Node
+        const args = process.argv.slice(1);
+        const options = { stdio: 'inherit', detached: true };
+
+        if (process.platform === 'win32') {
+          exec(`start cmd /c "cd ${process.cwd()} && npm start"`, { windowsHide: true });
+        } else {
+          exec(`cd ${process.cwd()} && npm start &`);
+        }
+
+        setTimeout(() => process.exit(0), 500);
+      }, 100);
+    }
+    // 404
+    else {
       res.writeHead(404);
       res.end('Not Found');
     }
@@ -582,7 +963,7 @@ function inicializar(opciones = {}) {
     const url = `http://localhost:${WEB_PORT}`;
     console.log(`[WebUI] Interfaz web disponible en ${url}`);
 
-    // Abrir navegador automáticamente (solo en Windows)
+    // Abrir navegador automáticamente
     if (process.platform === 'win32') {
       exec(`start ${url}`);
     } else if (process.platform === 'darwin') {
@@ -631,7 +1012,14 @@ function setAgente(agente) {
 }
 
 function setWorkspace(workspace) {
-  estado.workspaceNombre = workspace?.nombre || null;
+  // Compatibilidad: si recibe un solo workspace, agregarlo al array
+  if (workspace && !estado.workspaces.find(w => w.id === workspace.id)) {
+    estado.workspaces.push(workspace);
+  }
+}
+
+function setWorkspaces(workspaces) {
+  estado.workspaces = workspaces || [];
 }
 
 function setRegistradores(registradores) {
@@ -679,6 +1067,7 @@ module.exports = {
   setConectado,
   setAgente,
   setWorkspace,
+  setWorkspaces,
   setRegistradores,
   actualizarRegistrador,
   renderizar,
