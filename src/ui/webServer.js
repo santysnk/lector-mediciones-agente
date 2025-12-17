@@ -21,11 +21,18 @@ const estado = {
   workspaces: [], // Array de workspaces vinculados
   registradores: [],
   logs: [],
+  logsRegistradores: [], // Log separado para lecturas de registradores
+  estadisticas: {
+    lecturasExitosas: 0,
+    lecturasFallidas: 0,
+    totalLecturas: 0,
+  },
   iniciado: null,
   claveConfigurada: !!process.env.CLAVE_SECRETA,
 };
 
 const MAX_LOGS = 100;
+const MAX_LOGS_REGISTRADORES = 50;
 
 let server = null;
 let onSalir = null;
@@ -74,6 +81,15 @@ function generarHTML() {
   const logsHTML = estado.logs.length === 0
     ? '<div class="log-entry info">Sin logs todavía...</div>'
     : estado.logs.map(log => `
+        <div class="log-entry ${log.tipo}">
+          <span class="timestamp">${log.timestamp}</span>
+          <span class="mensaje">${escapeHTML(log.mensaje)}</span>
+        </div>
+      `).join('');
+
+  const logsRegistradoresHTML = estado.logsRegistradores.length === 0
+    ? '<div class="log-entry info">Sin lecturas todavía...</div>'
+    : estado.logsRegistradores.map(log => `
         <div class="log-entry ${log.tipo}">
           <span class="timestamp">${log.timestamp}</span>
           <span class="mensaje">${escapeHTML(log.mensaje)}</span>
@@ -409,6 +425,52 @@ function generarHTML() {
       justify-content: space-between;
     }
     .no-clave-banner span { font-weight: 500; }
+
+    /* Grid de dos columnas para logs */
+    .logs-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+
+    /* Estadísticas */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 15px;
+      margin-bottom: 20px;
+    }
+    .stat-card {
+      background: #0d1117;
+      border-radius: 8px;
+      padding: 20px;
+      text-align: center;
+      border: 1px solid #0f3460;
+    }
+    .stat-card .stat-value {
+      font-size: 2rem;
+      font-weight: 700;
+      margin-bottom: 5px;
+    }
+    .stat-card .stat-label {
+      font-size: 0.85rem;
+      color: #888;
+      text-transform: uppercase;
+    }
+    .stat-card.exitosas .stat-value { color: #00ff88; }
+    .stat-card.fallidas .stat-value { color: #ff4757; }
+    .stat-card.total .stat-value { color: #00d9ff; }
+
+    /* Log de registradores */
+    .logs-container-small {
+      max-height: 300px;
+      overflow-y: auto;
+      background: #0d1117;
+      border-radius: 4px;
+      padding: 10px;
+      font-family: 'Consolas', 'Monaco', monospace;
+      font-size: 0.8rem;
+    }
   </style>
 </head>
 <body>
@@ -494,12 +556,42 @@ function generarHTML() {
     </div>
 
     <div class="section">
-      <div class="section-header">
-        <h2>📝 Log (últimos <span id="logs-count">${estado.logs.length}</span> mensajes)</h2>
-        <button id="btn-limpiar-logs" class="btn-limpiar" onclick="limpiarLogs()">🗑️ Limpiar</button>
+      <h2>📈 Estadísticas de Lecturas</h2>
+      <div class="stats-grid">
+        <div class="stat-card exitosas">
+          <div id="stat-exitosas" class="stat-value">${estado.estadisticas.lecturasExitosas}</div>
+          <div class="stat-label">Exitosas</div>
+        </div>
+        <div class="stat-card fallidas">
+          <div id="stat-fallidas" class="stat-value">${estado.estadisticas.lecturasFallidas}</div>
+          <div class="stat-label">Fallidas</div>
+        </div>
+        <div class="stat-card total">
+          <div id="stat-total" class="stat-value">${estado.estadisticas.totalLecturas}</div>
+          <div class="stat-label">Total</div>
+        </div>
       </div>
-      <div id="logs-container" class="logs-container">
-        ${logsHTML}
+    </div>
+
+    <div class="logs-grid">
+      <div class="section">
+        <div class="section-header">
+          <h2>📡 Log Registradores (<span id="logs-reg-count">${estado.logsRegistradores.length}</span>)</h2>
+          <button class="btn-limpiar" onclick="limpiarLogsRegistradores()">🗑️ Limpiar</button>
+        </div>
+        <div id="logs-reg-container" class="logs-container-small">
+          ${logsRegistradoresHTML}
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-header">
+          <h2>📝 Log Sistema (<span id="logs-count">${estado.logs.length}</span>)</h2>
+          <button id="btn-limpiar-logs" class="btn-limpiar" onclick="limpiarLogs()">🗑️ Limpiar</button>
+        </div>
+        <div id="logs-container" class="logs-container-small">
+          ${logsHTML}
+        </div>
       </div>
     </div>
 
@@ -585,6 +677,7 @@ function generarHTML() {
 
     // Actualización sin recarga de página
     let ultimoLogCount = 0;
+    let ultimoLogRegCount = 0;
 
     async function actualizarEstado() {
       try {
@@ -618,20 +711,28 @@ function generarHTML() {
         document.getElementById('registradores-count').textContent = estado.registradores.length;
         document.getElementById('registradores-body').innerHTML = generarRegistradoresHTML(estado.registradores);
 
-        // Actualizar logs SOLO si hay nuevos (para preservar scroll)
+        // Actualizar estadísticas
+        if (estado.estadisticas) {
+          document.getElementById('stat-exitosas').textContent = estado.estadisticas.lecturasExitosas || 0;
+          document.getElementById('stat-fallidas').textContent = estado.estadisticas.lecturasFallidas || 0;
+          document.getElementById('stat-total').textContent = estado.estadisticas.totalLecturas || 0;
+        }
+
+        // Actualizar logs del sistema SOLO si hay nuevos
         const logsContainer = document.getElementById('logs-container');
         if (estado.logs.length !== ultimoLogCount) {
-          const scrollPos = logsContainer.scrollTop;
-          const scrollHeight = logsContainer.scrollHeight;
-
           document.getElementById('logs-count').textContent = estado.logs.length;
           logsContainer.innerHTML = generarLogsHTML(estado.logs);
-
-          const newScrollHeight = logsContainer.scrollHeight;
-          const diff = newScrollHeight - scrollHeight;
-          logsContainer.scrollTop = scrollPos + diff;
-
           ultimoLogCount = estado.logs.length;
+        }
+
+        // Actualizar logs de registradores SOLO si hay nuevos
+        const logsRegContainer = document.getElementById('logs-reg-container');
+        const logsRegistradores = estado.logsRegistradores || [];
+        if (logsRegistradores.length !== ultimoLogRegCount) {
+          document.getElementById('logs-reg-count').textContent = logsRegistradores.length;
+          logsRegContainer.innerHTML = generarLogsHTML(logsRegistradores);
+          ultimoLogRegCount = logsRegistradores.length;
         }
 
         indicator.classList.remove('updating');
@@ -694,7 +795,7 @@ function generarHTML() {
       return div.innerHTML;
     }
 
-    // Limpiar logs
+    // Limpiar logs del sistema
     async function limpiarLogs() {
       try {
         const response = await fetch('/api/limpiar-logs', { method: 'POST' });
@@ -706,6 +807,21 @@ function generarHTML() {
         }
       } catch (error) {
         console.error('Error limpiando logs:', error);
+      }
+    }
+
+    // Limpiar logs de registradores
+    async function limpiarLogsRegistradores() {
+      try {
+        const response = await fetch('/api/limpiar-logs-registradores', { method: 'POST' });
+        if (response.ok) {
+          document.getElementById('logs-reg-container').innerHTML =
+            '<div class="log-entry info"><span class="timestamp"></span><span class="mensaje">Logs limpiados</span></div>';
+          document.getElementById('logs-reg-count').textContent = '0';
+          ultimoLogRegCount = 0;
+        }
+      } catch (error) {
+        console.error('Error limpiando logs de registradores:', error);
       }
     }
 
@@ -843,9 +959,15 @@ function inicializar(opciones = {}) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(estado));
     }
-    // API: Limpiar logs
+    // API: Limpiar logs del sistema
     else if (req.url === '/api/limpiar-logs' && req.method === 'POST') {
       estado.logs = [];
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    }
+    // API: Limpiar logs de registradores
+    else if (req.url === '/api/limpiar-logs-registradores' && req.method === 'POST') {
+      estado.logsRegistradores = [];
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true }));
     }
@@ -1001,6 +1123,33 @@ function log(mensaje, tipo = 'info') {
   console.log(`${timestamp} ${prefijos[tipo] || '[-]'} ${mensaje}`);
 }
 
+/**
+ * Log específico para lecturas de registradores (va al log separado y actualiza estadísticas)
+ */
+function logRegistrador(mensaje, exito) {
+  const timestamp = new Date().toLocaleTimeString('es-ES', { hour12: false });
+  const tipo = exito ? 'exito' : 'error';
+
+  estado.logsRegistradores.unshift({ timestamp, mensaje, tipo });
+
+  // Limitar cantidad de logs
+  if (estado.logsRegistradores.length > MAX_LOGS_REGISTRADORES) {
+    estado.logsRegistradores = estado.logsRegistradores.slice(0, MAX_LOGS_REGISTRADORES);
+  }
+
+  // Actualizar estadísticas
+  estado.estadisticas.totalLecturas++;
+  if (exito) {
+    estado.estadisticas.lecturasExitosas++;
+  } else {
+    estado.estadisticas.lecturasFallidas++;
+  }
+
+  // También imprimir en consola
+  const prefijo = exito ? '[+]' : '[!]';
+  console.log(`${timestamp} ${prefijo} [REG] ${mensaje}`);
+}
+
 function setConectado(conectado) {
   estado.conectado = conectado;
 }
@@ -1035,7 +1184,7 @@ function setRegistradores(registradores) {
     estado: r.activo ? 'espera' : 'inactivo',
     proximaLectura: null,
     ultimaLectura: null,
-  }));
+  })).sort((a, b) => a.nombre.localeCompare(b.nombre));
 }
 
 function actualizarRegistrador(id, datos) {
@@ -1064,6 +1213,7 @@ function iniciarReloj() {
 module.exports = {
   inicializar,
   log,
+  logRegistrador,
   setConectado,
   setAgente,
   setWorkspace,

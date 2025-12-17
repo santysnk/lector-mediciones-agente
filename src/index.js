@@ -112,16 +112,19 @@ async function leerRegistrador(registrador) {
 
     if (resultado.ok) {
       terminal.actualizarRegistrador(registrador.id, { estado: 'activo' });
-      terminal.log(
-        `${registrador.nombre}: ${valores.length} registros (${tiempoMs}ms)`,
-        'exito'
-      );
+      // Log en sección de registradores (si está disponible)
+      if (terminal.logRegistrador) {
+        terminal.logRegistrador(`${registrador.nombre}: ${valores.length} registros (${tiempoMs}ms)`, true);
+      } else {
+        terminal.log(`${registrador.nombre}: ${valores.length} registros (${tiempoMs}ms)`, 'exito');
+      }
     } else {
       terminal.actualizarRegistrador(registrador.id, { estado: 'error' });
-      terminal.log(
-        `${registrador.nombre}: Error enviando lectura`,
-        'error'
-      );
+      if (terminal.logRegistrador) {
+        terminal.logRegistrador(`${registrador.nombre}: Error enviando lectura`, false);
+      } else {
+        terminal.log(`${registrador.nombre}: Error enviando lectura`, 'error');
+      }
     }
 
     return { exito: true, valores };
@@ -144,10 +147,11 @@ async function leerRegistrador(registrador) {
     }
 
     terminal.actualizarRegistrador(registrador.id, { estado: 'error' });
-    terminal.log(
-      `${registrador.nombre}: ${error.message}`,
-      'error'
-    );
+    if (terminal.logRegistrador) {
+      terminal.logRegistrador(`${registrador.nombre}: ${error.message}`, false);
+    } else {
+      terminal.log(`${registrador.nombre}: ${error.message}`, 'error');
+    }
     return { exito: false, error: error.message };
   }
 }
