@@ -176,8 +176,6 @@ async function obtenerConfiguracion(esInicial = false) {
   // Si es la carga inicial, establecer el hash base para evitar falsos positivos
   if (esInicial && data.registradores) {
     ultimaConfigHash = hashConfiguracion(data.registradores);
-    ultimosRegistradoresIds = new Set(data.registradores.map(r => r.id));
-    ultimosRegistradoresActivos = new Map(data.registradores.map(r => [r.id, r.activo]));
     log('Hash de configuración inicial establecido', 'info');
   }
 
@@ -299,8 +297,7 @@ function hashConfiguracion(registradores) {
 
 /**
  * Polling de configuración para detectar cambios
- * IMPORTANTE: NO reinicia las lecturas en curso.
- * Solo detecta cambios estructurales (nuevos registradores, eliminados, o cambios de activo)
+ * Notifica al callback con los nuevos registradores para que maneje los cambios granularmente
  */
 async function pollConfiguracion() {
   if (!token) return;
@@ -312,21 +309,10 @@ async function pollConfiguracion() {
 
     // Solo procesar si ya teníamos un hash previo Y es diferente
     if (ultimaConfigHash !== null && ultimaConfigHash !== nuevoHash) {
-      // Detectar qué tipo de cambio ocurrió
-      const cambio = detectarTipoCambio(ultimaConfigHash, nuevoHash, registradores);
-
-      if (cambio.requiereReinicio) {
-        // Solo reiniciar si hay nuevos registradores, eliminados, o cambios de activo
-        log(`Cambio estructural detectado: ${cambio.razon}`, 'info');
-        if (callbacks.onConfiguracionCambiada) {
-          callbacks.onConfiguracionCambiada(registradores);
-        }
-      } else {
-        // Cambios menores (intervalo, nombre, etc.) - actualizar en caliente sin reiniciar
-        log(`Cambio menor detectado: ${cambio.razon} (no reinicia lecturas)`, 'info');
-        if (callbacks.onConfiguracionActualizada) {
-          callbacks.onConfiguracionActualizada(registradores);
-        }
+      log('Cambio en configuración detectado', 'info');
+      // El callback maneja los cambios de forma granular (no reinicia todo)
+      if (callbacks.onConfiguracionCambiada) {
+        callbacks.onConfiguracionCambiada(registradores);
       }
     }
 
@@ -334,51 +320,6 @@ async function pollConfiguracion() {
   } catch (error) {
     log(`Error obteniendo configuración: ${error.message}`, 'advertencia');
   }
-}
-
-// Cache del último set de IDs y estados activos para detectar cambios estructurales
-let ultimosRegistradoresIds = new Set();
-let ultimosRegistradoresActivos = new Map();
-
-/**
- * Detecta si el cambio requiere reiniciar el polling o no
- */
-function detectarTipoCambio(hashAnterior, hashNuevo, registradoresNuevos) {
-  const idsNuevos = new Set(registradoresNuevos.map(r => r.id));
-  const activosNuevos = new Map(registradoresNuevos.map(r => [r.id, r.activo]));
-
-  // Verificar si hay nuevos registradores
-  for (const id of idsNuevos) {
-    if (!ultimosRegistradoresIds.has(id)) {
-      ultimosRegistradoresIds = idsNuevos;
-      ultimosRegistradoresActivos = activosNuevos;
-      return { requiereReinicio: true, razon: 'nuevo registrador agregado' };
-    }
-  }
-
-  // Verificar si se eliminaron registradores
-  for (const id of ultimosRegistradoresIds) {
-    if (!idsNuevos.has(id)) {
-      ultimosRegistradoresIds = idsNuevos;
-      ultimosRegistradoresActivos = activosNuevos;
-      return { requiereReinicio: true, razon: 'registrador eliminado' };
-    }
-  }
-
-  // Verificar si cambió el estado activo de algún registrador
-  for (const [id, activoNuevo] of activosNuevos) {
-    const activoAnterior = ultimosRegistradoresActivos.get(id);
-    if (activoAnterior !== undefined && activoAnterior !== activoNuevo) {
-      ultimosRegistradoresIds = idsNuevos;
-      ultimosRegistradoresActivos = activosNuevos;
-      return { requiereReinicio: true, razon: `registrador ${activoNuevo ? 'activado' : 'desactivado'}` };
-    }
-  }
-
-  // Si llegamos aquí, son cambios menores (intervalo, nombre, IP, etc.)
-  ultimosRegistradoresIds = idsNuevos;
-  ultimosRegistradoresActivos = activosNuevos;
-  return { requiereReinicio: false, razon: 'cambio de configuración menor' };
 }
 
 /**

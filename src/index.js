@@ -278,6 +278,125 @@ async function ejecutarTestConexion(test) {
 }
 
 /**
+ * Inicia el polling de UN registrador específico
+ */
+function iniciarPollingRegistrador(reg) {
+  if (!reg.activo) return;
+
+  const intervaloSegundos = reg.intervalo_segundos || 60;
+  const intervaloMs = intervaloSegundos * 1000;
+
+  // Inicializar contador de próxima lectura
+  contadoresProxLectura.set(reg.id, intervaloSegundos);
+  terminal.actualizarRegistrador(reg.id, { proximaLectura: intervaloSegundos });
+
+  // Primera lectura inmediata
+  leerRegistrador(reg);
+
+  // Configurar intervalo para lecturas subsiguientes
+  const intervalId = setInterval(() => {
+    if (cicloActivo) {
+      // Obtener el intervalo actual del cache (puede haber cambiado)
+      const regActual = registradoresCache.find(r => r.id === reg.id);
+      if (regActual && regActual.activo) {
+        leerRegistrador(regActual);
+        const nuevoIntervalo = regActual.intervalo_segundos || 60;
+        contadoresProxLectura.set(reg.id, nuevoIntervalo);
+        terminal.actualizarRegistrador(reg.id, { proximaLectura: nuevoIntervalo });
+      }
+    }
+  }, intervaloMs);
+
+  intervalosLectura.set(reg.id, intervalId);
+  terminal.log(`Polling iniciado para ${reg.nombre} (cada ${intervaloSegundos}s)`, 'ciclo');
+}
+
+/**
+ * Detiene el polling de UN registrador específico
+ */
+function detenerPollingRegistrador(regId) {
+  const intervalId = intervalosLectura.get(regId);
+  if (intervalId) {
+    clearInterval(intervalId);
+    intervalosLectura.delete(regId);
+    contadoresProxLectura.delete(regId);
+    terminal.log(`Polling detenido para registrador ${regId}`, 'advertencia');
+  }
+}
+
+/**
+ * Actualiza los registradores de forma granular (sin reiniciar todo)
+ */
+async function actualizarRegistradoresGranular(registradoresNuevos) {
+  if (!registradoresNuevos) return;
+
+  // Transformar formato
+  const nuevosTransformados = registradoresNuevos.map(r => ({
+    id: r.id,
+    nombre: r.nombre,
+    tipo: r.tipo,
+    ip: r.ip,
+    puerto: r.puerto,
+    unit_id: r.unitId,
+    indice_inicial: r.indiceInicial,
+    cantidad_registros: r.cantidadRegistros,
+    intervalo_segundos: r.intervaloSegundos,
+    timeout_ms: r.timeoutMs,
+    activo: r.activo !== false,
+    alimentador: r.alimentador,
+  }));
+
+  const idsNuevos = new Set(nuevosTransformados.map(r => r.id));
+  const idsActuales = new Set(registradoresCache.map(r => r.id));
+
+  // 1. Detectar registradores ELIMINADOS -> detener su polling
+  for (const regActual of registradoresCache) {
+    if (!idsNuevos.has(regActual.id)) {
+      terminal.log(`Registrador eliminado: ${regActual.nombre}`, 'advertencia');
+      detenerPollingRegistrador(regActual.id);
+    }
+  }
+
+  // 2. Detectar registradores NUEVOS -> iniciar su polling
+  for (const regNuevo of nuevosTransformados) {
+    if (!idsActuales.has(regNuevo.id)) {
+      terminal.log(`Nuevo registrador detectado: ${regNuevo.nombre}`, 'info');
+      if (regNuevo.activo && cicloActivo) {
+        iniciarPollingRegistrador(regNuevo);
+      }
+    }
+  }
+
+  // 3. Detectar cambios de estado ACTIVO/INACTIVO
+  for (const regNuevo of nuevosTransformados) {
+    const regActual = registradoresCache.find(r => r.id === regNuevo.id);
+    if (regActual) {
+      // Cambió de activo a inactivo -> detener polling
+      if (regActual.activo && !regNuevo.activo) {
+        terminal.log(`Registrador desactivado: ${regNuevo.nombre}`, 'advertencia');
+        detenerPollingRegistrador(regNuevo.id);
+        terminal.actualizarRegistrador(regNuevo.id, { estado: 'inactivo' });
+      }
+      // Cambió de inactivo a activo -> iniciar polling
+      else if (!regActual.activo && regNuevo.activo) {
+        terminal.log(`Registrador activado: ${regNuevo.nombre}`, 'exito');
+        if (cicloActivo) {
+          iniciarPollingRegistrador(regNuevo);
+        }
+      }
+      // Cambió el intervalo -> se aplicará en el próximo ciclo automáticamente
+      else if (regActual.intervalo_segundos !== regNuevo.intervalo_segundos) {
+        terminal.log(`Intervalo cambiado para ${regNuevo.nombre}: ${regActual.intervalo_segundos}s -> ${regNuevo.intervalo_segundos}s (se aplicará en próximo ciclo)`, 'info');
+      }
+    }
+  }
+
+  // 4. Actualizar el cache con los nuevos datos
+  registradoresCache = nuevosTransformados;
+  terminal.setRegistradores(registradoresCache);
+}
+
+/**
  * Detiene el ciclo de polling
  */
 function detenerPolling() {
@@ -363,12 +482,9 @@ async function main() {
     onLog: (mensaje, tipo) => {
       terminal.log(`[REST] ${mensaje}`, tipo);
     },
-    onRegistradoresActualizar: async () => {
-      // Recargar registradores cuando cambian desde el frontend
-      terminal.log('Recargando registradores (cambio desde frontend)...', 'ciclo');
-      detenerPolling();
-      await cargarRegistradores();
-      iniciarPolling();
+    onRegistradoresActualizar: async (registradoresNuevos) => {
+      // Actualización granular: solo afecta a los registradores que cambiaron
+      await actualizarRegistradoresGranular(registradoresNuevos);
     },
     onTestPendiente: (test) => {
       // Ejecutar test de conexión cuando se recibe uno pendiente
