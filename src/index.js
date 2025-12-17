@@ -160,6 +160,7 @@ async function leerRegistrador(registrador) {
 
 /**
  * Inicia el ciclo de polling para todos los registradores
+ * Escalonando automáticamente registradores que comparten IP
  */
 function iniciarPolling() {
   if (cicloActivo) {
@@ -184,29 +185,64 @@ function iniciarPolling() {
 
   terminal.log(`Iniciando polling de ${registradoresActivos.length} registrador(es) activo(s)...`, 'ciclo');
 
-  // Crear un intervalo por cada registrador ACTIVO según su configuración
-  registradoresActivos.forEach((reg) => {
-    const intervaloSegundos = reg.intervalo_segundos || 60;
-    const intervaloMs = intervaloSegundos * 1000;
+  // Agrupar registradores por IP para escalonar
+  const porIp = new Map(); // IP -> [registradores]
+  for (const reg of registradoresActivos) {
+    if (!porIp.has(reg.ip)) {
+      porIp.set(reg.ip, []);
+    }
+    porIp.get(reg.ip).push(reg);
+  }
 
-    // Inicializar contador de próxima lectura
-    contadoresProxLectura.set(reg.id, intervaloSegundos);
-    terminal.actualizarRegistrador(reg.id, { proximaLectura: intervaloSegundos });
+  // Iniciar polling con escalonamiento por IP
+  for (const [ip, regs] of porIp) {
+    if (regs.length > 1) {
+      terminal.log(`IP ${ip}: ${regs.length} registradores, escalonando lecturas`, 'info');
+    }
 
-    // Primera lectura inmediata
-    leerRegistrador(reg);
+    regs.forEach((reg, index) => {
+      const intervaloSegundos = reg.intervalo_segundos || 60;
+      const intervaloMs = intervaloSegundos * 1000;
 
-    // Configurar intervalo para lecturas subsiguientes
-    const intervalId = setInterval(() => {
-      if (cicloActivo) {
+      // Calcular delay escalonado: 0 para el primero, intervalo/n para los siguientes
+      const delayMs = index === 0 ? 0 : Math.floor((intervaloSegundos * 1000 * index) / regs.length);
+      const delaySegundos = Math.ceil(delayMs / 1000);
+
+      // Inicializar contador de próxima lectura
+      contadoresProxLectura.set(reg.id, delaySegundos || intervaloSegundos);
+      terminal.actualizarRegistrador(reg.id, { proximaLectura: delaySegundos || intervaloSegundos });
+
+      if (delayMs > 0) {
+        // Primera lectura con delay
+        setTimeout(() => {
+          if (!cicloActivo) return;
+          const regActual = registradoresCache.find(r => r.id === reg.id);
+          if (regActual && regActual.activo) {
+            leerRegistrador(regActual);
+            contadoresProxLectura.set(reg.id, intervaloSegundos);
+            terminal.actualizarRegistrador(reg.id, { proximaLectura: intervaloSegundos });
+          }
+        }, delayMs);
+      } else {
+        // Primera lectura inmediata
         leerRegistrador(reg);
-        contadoresProxLectura.set(reg.id, intervaloSegundos);
-        terminal.actualizarRegistrador(reg.id, { proximaLectura: intervaloSegundos });
       }
-    }, intervaloMs);
 
-    intervalosLectura.set(reg.id, intervalId);
-  });
+      // Configurar intervalo para lecturas subsiguientes
+      const intervalId = setInterval(() => {
+        if (cicloActivo) {
+          const regActual = registradoresCache.find(r => r.id === reg.id);
+          if (regActual && regActual.activo) {
+            leerRegistrador(regActual);
+            contadoresProxLectura.set(reg.id, intervaloSegundos);
+            terminal.actualizarRegistrador(reg.id, { proximaLectura: intervaloSegundos });
+          }
+        }
+      }, intervaloMs);
+
+      intervalosLectura.set(reg.id, intervalId);
+    });
+  }
 
   // Asegurar que el contador global esté corriendo
   asegurarContadorGlobal();
@@ -285,9 +321,39 @@ function asegurarContadorGlobal() {
 }
 
 /**
- * Inicia el polling de UN registrador específico
+ * Calcula el delay inicial para escalonar lecturas de registradores con misma IP
+ * Evita colisiones cuando múltiples registradores apuntan al mismo dispositivo
+ * @param {string} ip - IP del registrador
+ * @param {number} intervaloSegundos - Intervalo del registrador
+ * @returns {number} - Delay en milisegundos
  */
-function iniciarPollingRegistrador(reg) {
+function calcularDelayEscalonado(ip, intervaloSegundos) {
+  // Contar cuántos registradores activos ya tienen polling para esta IP
+  let countMismaIp = 0;
+  for (const [regId] of intervalosLectura) {
+    const reg = registradoresCache.find(r => r.id === regId);
+    if (reg && reg.ip === ip) {
+      countMismaIp++;
+    }
+  }
+
+  if (countMismaIp === 0) {
+    return 0; // Primera lectura de esta IP, sin delay
+  }
+
+  // Escalonar: dividir el intervalo entre los registradores de la misma IP
+  // Si hay 1 ya activo, el nuevo se retrasa intervalo/2
+  // Si hay 2 ya activos, el nuevo se retrasa intervalo/3, etc.
+  const delaySegundos = Math.floor(intervaloSegundos / (countMismaIp + 1));
+  return delaySegundos * 1000;
+}
+
+/**
+ * Inicia el polling de UN registrador específico
+ * @param {Object} reg - Registrador a iniciar
+ * @param {number} delayInicialMs - Delay opcional para escalonar inicio (ms)
+ */
+function iniciarPollingRegistrador(reg, delayInicialMs = null) {
   if (!reg.activo) return;
 
   // Asegurar que cicloActivo esté en true y el contador global esté corriendo
@@ -300,14 +366,34 @@ function iniciarPollingRegistrador(reg) {
   const intervaloSegundos = reg.intervalo_segundos || 60;
   const intervaloMs = intervaloSegundos * 1000;
 
-  // Inicializar contador de próxima lectura
-  contadoresProxLectura.set(reg.id, intervaloSegundos);
-  terminal.actualizarRegistrador(reg.id, { proximaLectura: intervaloSegundos });
+  // Calcular delay de escalonamiento si no se proporcionó
+  const delayMs = delayInicialMs !== null ? delayInicialMs : calcularDelayEscalonado(reg.ip, intervaloSegundos);
 
-  // Primera lectura inmediata
-  leerRegistrador(reg);
+  if (delayMs > 0) {
+    // Iniciar con delay para evitar colisión con otros registradores de la misma IP
+    const delaySegundos = Math.ceil(delayMs / 1000);
+    contadoresProxLectura.set(reg.id, delaySegundos);
+    terminal.actualizarRegistrador(reg.id, { proximaLectura: delaySegundos });
+    terminal.log(`Polling para ${reg.nombre} iniciará en ${delaySegundos}s (escalonado por IP compartida)`, 'ciclo');
 
-  // Configurar intervalo para lecturas subsiguientes
+    // Programar primera lectura con delay
+    setTimeout(() => {
+      if (!cicloActivo) return;
+      const regActual = registradoresCache.find(r => r.id === reg.id);
+      if (regActual && regActual.activo) {
+        leerRegistrador(regActual);
+        contadoresProxLectura.set(reg.id, intervaloSegundos);
+        terminal.actualizarRegistrador(reg.id, { proximaLectura: intervaloSegundos });
+      }
+    }, delayMs);
+  } else {
+    // Primera lectura inmediata
+    contadoresProxLectura.set(reg.id, intervaloSegundos);
+    terminal.actualizarRegistrador(reg.id, { proximaLectura: intervaloSegundos });
+    leerRegistrador(reg);
+  }
+
+  // Configurar intervalo para lecturas subsiguientes (siempre empieza después del delay + intervalo)
   const intervalId = setInterval(() => {
     if (cicloActivo) {
       // Obtener el intervalo actual del cache (puede haber cambiado)
