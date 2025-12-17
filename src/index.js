@@ -208,18 +208,8 @@ function iniciarPolling() {
     intervalosLectura.set(reg.id, intervalId);
   });
 
-  // Actualizar contadores cada segundo (solo para IDs en contadoresProxLectura)
-  contadorIntervalId = setInterval(() => {
-    if (!cicloActivo) return;
-
-    contadoresProxLectura.forEach((segundos, regId) => {
-      if (segundos > 0) {
-        const nuevoValor = segundos - 1;
-        contadoresProxLectura.set(regId, nuevoValor);
-        terminal.actualizarRegistrador(regId, { proximaLectura: nuevoValor });
-      }
-    });
-  }, 1000);
+  // Asegurar que el contador global esté corriendo
+  asegurarContadorGlobal();
 }
 
 /**
@@ -278,10 +268,34 @@ async function ejecutarTestConexion(test) {
 }
 
 /**
+ * Asegura que el contador global de segundos esté corriendo
+ */
+function asegurarContadorGlobal() {
+  if (contadorIntervalId) return; // Ya está corriendo
+
+  contadorIntervalId = setInterval(() => {
+    contadoresProxLectura.forEach((segundos, regId) => {
+      if (segundos > 0) {
+        const nuevoValor = segundos - 1;
+        contadoresProxLectura.set(regId, nuevoValor);
+        terminal.actualizarRegistrador(regId, { proximaLectura: nuevoValor });
+      }
+    });
+  }, 1000);
+}
+
+/**
  * Inicia el polling de UN registrador específico
  */
 function iniciarPollingRegistrador(reg) {
   if (!reg.activo) return;
+
+  // Asegurar que cicloActivo esté en true y el contador global esté corriendo
+  if (!cicloActivo) {
+    cicloActivo = true;
+    terminal.log('Ciclo de polling activado', 'ciclo');
+  }
+  asegurarContadorGlobal();
 
   const intervaloSegundos = reg.intervalo_segundos || 60;
   const intervaloMs = intervaloSegundos * 1000;
@@ -357,11 +371,11 @@ async function actualizarRegistradoresGranular(registradoresNuevos) {
     }
   }
 
-  // 2. Detectar registradores NUEVOS -> iniciar su polling
+  // 2. Detectar registradores NUEVOS -> iniciar su polling si está activo
   for (const regNuevo of nuevosTransformados) {
     if (!idsActuales.has(regNuevo.id)) {
       terminal.log(`Nuevo registrador detectado: ${regNuevo.nombre}`, 'info');
-      if (regNuevo.activo && cicloActivo) {
+      if (regNuevo.activo) {
         iniciarPollingRegistrador(regNuevo);
       }
     }
@@ -380,9 +394,7 @@ async function actualizarRegistradoresGranular(registradoresNuevos) {
       // Cambió de inactivo a activo -> iniciar polling
       else if (!regActual.activo && regNuevo.activo) {
         terminal.log(`Registrador activado: ${regNuevo.nombre}`, 'exito');
-        if (cicloActivo) {
-          iniciarPollingRegistrador(regNuevo);
-        }
+        iniciarPollingRegistrador(regNuevo);
       }
       // Cambió el intervalo -> se aplicará en el próximo ciclo automáticamente
       else if (regActual.intervalo_segundos !== regNuevo.intervalo_segundos) {
