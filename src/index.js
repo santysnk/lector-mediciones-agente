@@ -11,8 +11,10 @@ const {
   obtenerDatosAgente,
   obtenerConfiguracion,
   enviarLecturas,
+  reportarResultadoTest,
   BACKEND_URL,
 } = require('./servicios/restService');
+const { testConexionModbus } = require('./modbus/clienteModbus');
 
 // Interfaz: 'web' para navegador, 'terminal' para blessed
 const INTERFAZ = process.env.INTERFAZ || 'web';
@@ -29,6 +31,7 @@ let cicloActivo = false;
 let intervalosLectura = new Map(); // Map de registradorId -> intervalId
 let contadoresProxLectura = new Map(); // Map de registradorId -> segundos restantes
 let contadorIntervalId = null;
+let testsEnProceso = new Set(); // Para evitar ejecutar el mismo test múltiples veces
 
 /**
  * Carga los registradores desde el backend via REST
@@ -214,6 +217,61 @@ function iniciarPolling() {
 }
 
 /**
+ * Ejecuta un test de conexión Modbus y reporta el resultado
+ */
+async function ejecutarTestConexion(test) {
+  // Evitar ejecutar el mismo test múltiples veces
+  if (testsEnProceso.has(test.id)) {
+    return;
+  }
+
+  testsEnProceso.add(test.id);
+
+  terminal.log(`Ejecutando test: ${test.ip}:${test.puerto} (registros ${test.indice_inicial}-${test.indice_inicial + test.cantidad_registros - 1})`, 'ciclo');
+
+  try {
+    const resultado = await testConexionModbus({
+      ip: test.ip,
+      puerto: test.puerto,
+      unitId: test.unit_id || 1,
+      indiceInicial: test.indice_inicial,
+      cantRegistros: test.cantidad_registros,
+    });
+
+    if (resultado.exito) {
+      terminal.log(`Test exitoso: ${resultado.tiempoMs}ms - ${resultado.registros.length} registros`, 'exito');
+
+      await reportarResultadoTest(test.id, {
+        exito: true,
+        tiempoRespuestaMs: resultado.tiempoMs,
+        valores: resultado.registros.map(r => r.valor),
+      });
+    } else {
+      terminal.log(`Test fallido: ${resultado.error}`, 'error');
+
+      await reportarResultadoTest(test.id, {
+        exito: false,
+        tiempoRespuestaMs: resultado.tiempoMs,
+        errorMensaje: resultado.error,
+      });
+    }
+  } catch (error) {
+    terminal.log(`Error ejecutando test: ${error.message}`, 'error');
+
+    try {
+      await reportarResultadoTest(test.id, {
+        exito: false,
+        errorMensaje: error.message,
+      });
+    } catch (e) {
+      terminal.log(`Error reportando resultado: ${e.message}`, 'error');
+    }
+  } finally {
+    testsEnProceso.delete(test.id);
+  }
+}
+
+/**
  * Detiene el ciclo de polling
  */
 function detenerPolling() {
@@ -305,6 +363,10 @@ async function main() {
       detenerPolling();
       await cargarRegistradores();
       iniciarPolling();
+    },
+    onTestPendiente: (test) => {
+      // Ejecutar test de conexión cuando se recibe uno pendiente
+      ejecutarTestConexion(test);
     },
   });
 }

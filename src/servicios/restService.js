@@ -10,6 +10,9 @@ const CLAVE_SECRETA = process.env.CLAVE_SECRETA;
 // Intervalo de polling para configuración (ms) - cada 10 segundos
 const CONFIG_POLL_INTERVAL = parseInt(process.env.CONFIG_POLL_INTERVAL_MS) || 10000;
 
+// Intervalo de polling para tests pendientes (ms) - cada 5 segundos
+const TESTS_POLL_INTERVAL = parseInt(process.env.TESTS_POLL_INTERVAL_MS) || 5000;
+
 // Intervalo de heartbeat (ms)
 const HEARTBEAT_INTERVAL = 30000;
 
@@ -20,6 +23,7 @@ let workspacesData = [];
 let conectado = false;
 let heartbeatIntervalId = null;
 let configPollIntervalId = null;
+let testsPollIntervalId = null;
 
 // Callbacks para eventos
 let callbacks = {
@@ -30,6 +34,7 @@ let callbacks = {
   onLog: null,
   onVinculado: null,
   onConfiguracionCambiada: null,
+  onTestPendiente: null,
 };
 
 // Última configuración conocida (para detectar cambios)
@@ -208,6 +213,37 @@ async function enviarLog(nivel, mensaje, metadata = {}) {
 }
 
 /**
+ * Obtiene tests de conexión pendientes para este agente
+ */
+async function obtenerTestsPendientes() {
+  if (!token) {
+    throw new Error('No autenticado');
+  }
+
+  const data = await fetchBackend('/agente/tests-pendientes', {
+    method: 'GET',
+  });
+
+  return data || [];
+}
+
+/**
+ * Reporta el resultado de un test de conexión
+ */
+async function reportarResultadoTest(testId, resultado) {
+  if (!token) {
+    throw new Error('No autenticado');
+  }
+
+  const data = await fetchBackend(`/agente/tests/${testId}/resultado`, {
+    method: 'POST',
+    body: JSON.stringify(resultado),
+  });
+
+  return data;
+}
+
+/**
  * Vincula el agente a un workspace usando código
  */
 async function vincularWorkspace(codigo) {
@@ -296,6 +332,46 @@ function iniciarConfigPolling() {
 }
 
 /**
+ * Polling de tests pendientes
+ */
+async function pollTestsPendientes() {
+  if (!token) return;
+
+  try {
+    const tests = await obtenerTestsPendientes();
+
+    if (tests && tests.length > 0) {
+      for (const test of tests) {
+        log(`Test de conexión pendiente recibido: ${test.ip}:${test.puerto}`, 'info');
+
+        // Notificar al callback para que index.js ejecute el test
+        if (callbacks.onTestPendiente) {
+          callbacks.onTestPendiente(test);
+        }
+      }
+    }
+  } catch (error) {
+    // Los errores de polling no son críticos
+    if (!error.message.includes('No autenticado')) {
+      log(`Error obteniendo tests pendientes: ${error.message}`, 'advertencia');
+    }
+  }
+}
+
+/**
+ * Inicia el polling de tests pendientes
+ */
+function iniciarTestsPolling() {
+  if (testsPollIntervalId) {
+    clearInterval(testsPollIntervalId);
+  }
+
+  // Configurar intervalo
+  testsPollIntervalId = setInterval(pollTestsPendientes, TESTS_POLL_INTERVAL);
+  log(`Polling de tests iniciado (cada ${TESTS_POLL_INTERVAL / 1000}s)`, 'ciclo');
+}
+
+/**
  * Detiene todos los intervalos
  */
 function detenerIntervalos() {
@@ -306,6 +382,10 @@ function detenerIntervalos() {
   if (configPollIntervalId) {
     clearInterval(configPollIntervalId);
     configPollIntervalId = null;
+  }
+  if (testsPollIntervalId) {
+    clearInterval(testsPollIntervalId);
+    testsPollIntervalId = null;
   }
 }
 
@@ -321,6 +401,7 @@ async function iniciarConexion(opciones = {}) {
   if (opciones.onLog) callbacks.onLog = opciones.onLog;
   if (opciones.onVinculado) callbacks.onVinculado = opciones.onVinculado;
   if (opciones.onRegistradoresActualizar) callbacks.onConfiguracionCambiada = opciones.onRegistradoresActualizar;
+  if (opciones.onTestPendiente) callbacks.onTestPendiente = opciones.onTestPendiente;
 
   log(`Conectando a backend: ${BACKEND_URL}`, 'info');
 
@@ -339,6 +420,7 @@ async function iniciarConexion(opciones = {}) {
     // Iniciar heartbeat y polling
     iniciarHeartbeat();
     iniciarConfigPolling();
+    iniciarTestsPolling();
   } else {
     if (callbacks.onError) {
       callbacks.onError(new Error('No se pudo autenticar'));
@@ -399,5 +481,6 @@ module.exports = {
   enviarLecturas,
   enviarLog,
   vincularWorkspace,
+  reportarResultadoTest,
   BACKEND_URL,
 };
