@@ -162,8 +162,9 @@ async function enviarHeartbeat() {
 
 /**
  * Obtiene la configuración (registradores) del agente
+ * @param {boolean} esInicial - Si es la carga inicial, establece el hash base
  */
-async function obtenerConfiguracion() {
+async function obtenerConfiguracion(esInicial = false) {
   if (!token) {
     throw new Error('No autenticado');
   }
@@ -171,6 +172,14 @@ async function obtenerConfiguracion() {
   const data = await fetchBackend('/agente/config', {
     method: 'GET',
   });
+
+  // Si es la carga inicial, establecer el hash base para evitar falsos positivos
+  if (esInicial && data.registradores) {
+    ultimaConfigHash = hashConfiguracion(data.registradores);
+    ultimosRegistradoresIds = new Set(data.registradores.map(r => r.id));
+    ultimosRegistradoresActivos = new Map(data.registradores.map(r => [r.id, r.activo]));
+    log('Hash de configuración inicial establecido', 'info');
+  }
 
   return data;
 }
@@ -270,29 +279,54 @@ async function vincularWorkspace(codigo) {
  * Genera un hash simple de la configuración para detectar cambios
  */
 function hashConfiguracion(registradores) {
-  return JSON.stringify(registradores.map(r => ({
+  // Ordenar por ID para asegurar consistencia
+  const ordenados = [...registradores].sort((a, b) => {
+    const idA = a.id || '';
+    const idB = b.id || '';
+    return idA.localeCompare(idB);
+  });
+
+  return JSON.stringify(ordenados.map(r => ({
     id: r.id,
     activo: r.activo,
     intervaloSegundos: r.intervaloSegundos,
     ip: r.ip,
     puerto: r.puerto,
+    indiceInicial: r.indiceInicial,
+    cantidadRegistros: r.cantidadRegistros,
   })));
 }
 
 /**
  * Polling de configuración para detectar cambios
+ * IMPORTANTE: NO reinicia las lecturas en curso.
+ * Solo detecta cambios estructurales (nuevos registradores, eliminados, o cambios de activo)
  */
 async function pollConfiguracion() {
   if (!token) return;
 
   try {
     const config = await obtenerConfiguracion();
-    const nuevoHash = hashConfiguracion(config.registradores || []);
+    const registradores = config.registradores || [];
+    const nuevoHash = hashConfiguracion(registradores);
 
+    // Solo procesar si ya teníamos un hash previo Y es diferente
     if (ultimaConfigHash !== null && ultimaConfigHash !== nuevoHash) {
-      log('Configuración cambiada, notificando...', 'info');
-      if (callbacks.onConfiguracionCambiada) {
-        callbacks.onConfiguracionCambiada(config.registradores);
+      // Detectar qué tipo de cambio ocurrió
+      const cambio = detectarTipoCambio(ultimaConfigHash, nuevoHash, registradores);
+
+      if (cambio.requiereReinicio) {
+        // Solo reiniciar si hay nuevos registradores, eliminados, o cambios de activo
+        log(`Cambio estructural detectado: ${cambio.razon}`, 'info');
+        if (callbacks.onConfiguracionCambiada) {
+          callbacks.onConfiguracionCambiada(registradores);
+        }
+      } else {
+        // Cambios menores (intervalo, nombre, etc.) - actualizar en caliente sin reiniciar
+        log(`Cambio menor detectado: ${cambio.razon} (no reinicia lecturas)`, 'info');
+        if (callbacks.onConfiguracionActualizada) {
+          callbacks.onConfiguracionActualizada(registradores);
+        }
       }
     }
 
@@ -300,6 +334,51 @@ async function pollConfiguracion() {
   } catch (error) {
     log(`Error obteniendo configuración: ${error.message}`, 'advertencia');
   }
+}
+
+// Cache del último set de IDs y estados activos para detectar cambios estructurales
+let ultimosRegistradoresIds = new Set();
+let ultimosRegistradoresActivos = new Map();
+
+/**
+ * Detecta si el cambio requiere reiniciar el polling o no
+ */
+function detectarTipoCambio(hashAnterior, hashNuevo, registradoresNuevos) {
+  const idsNuevos = new Set(registradoresNuevos.map(r => r.id));
+  const activosNuevos = new Map(registradoresNuevos.map(r => [r.id, r.activo]));
+
+  // Verificar si hay nuevos registradores
+  for (const id of idsNuevos) {
+    if (!ultimosRegistradoresIds.has(id)) {
+      ultimosRegistradoresIds = idsNuevos;
+      ultimosRegistradoresActivos = activosNuevos;
+      return { requiereReinicio: true, razon: 'nuevo registrador agregado' };
+    }
+  }
+
+  // Verificar si se eliminaron registradores
+  for (const id of ultimosRegistradoresIds) {
+    if (!idsNuevos.has(id)) {
+      ultimosRegistradoresIds = idsNuevos;
+      ultimosRegistradoresActivos = activosNuevos;
+      return { requiereReinicio: true, razon: 'registrador eliminado' };
+    }
+  }
+
+  // Verificar si cambió el estado activo de algún registrador
+  for (const [id, activoNuevo] of activosNuevos) {
+    const activoAnterior = ultimosRegistradoresActivos.get(id);
+    if (activoAnterior !== undefined && activoAnterior !== activoNuevo) {
+      ultimosRegistradoresIds = idsNuevos;
+      ultimosRegistradoresActivos = activosNuevos;
+      return { requiereReinicio: true, razon: `registrador ${activoNuevo ? 'activado' : 'desactivado'}` };
+    }
+  }
+
+  // Si llegamos aquí, son cambios menores (intervalo, nombre, IP, etc.)
+  ultimosRegistradoresIds = idsNuevos;
+  ultimosRegistradoresActivos = activosNuevos;
+  return { requiereReinicio: false, razon: 'cambio de configuración menor' };
 }
 
 /**

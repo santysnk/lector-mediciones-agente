@@ -47,7 +47,9 @@ async function cargarRegistradores() {
   terminal.log('Cargando registradores desde el backend...', 'info');
 
   try {
-    const config = await obtenerConfiguracion();
+    // Pasar true en la primera carga para establecer el hash base
+    const esInicial = registradoresCache.length === 0;
+    const config = await obtenerConfiguracion(esInicial);
     const registradores = config.registradores || [];
 
     if (registradores.length === 0) {
