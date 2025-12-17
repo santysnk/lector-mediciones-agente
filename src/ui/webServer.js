@@ -22,11 +22,7 @@ const estado = {
   registradores: [],
   logs: [],
   logsRegistradores: [], // Log separado para lecturas de registradores
-  estadisticas: {
-    lecturasExitosas: 0,
-    lecturasFallidas: 0,
-    totalLecturas: 0,
-  },
+  estadisticasPorRegistrador: {}, // { registradorId: { exitosas: N, fallidas: N } }
   iniciado: null,
   claveConfigurada: !!process.env.CLAVE_SECRETA,
 };
@@ -56,7 +52,7 @@ function generarHTML() {
       : `${estado.workspaces.length} workspaces`;
 
   const registradoresHTML = estado.registradores.length === 0
-    ? '<tr><td colspan="6" class="empty">No hay registradores configurados</td></tr>'
+    ? '<tr><td colspan="7" class="empty">No hay registradores configurados</td></tr>'
     : estado.registradores.map(reg => {
         let estadoClase = 'espera';
         if (reg.estado === 'inactivo') estadoClase = 'inactivo';
@@ -66,6 +62,10 @@ function generarHTML() {
         const proxLectura = reg.estado === 'inactivo' ? '---' :
           (reg.proximaLectura !== null ? `${reg.proximaLectura}s` : '---');
 
+        // Estadísticas individuales
+        const stats = estado.estadisticasPorRegistrador[reg.id] || { exitosas: 0, fallidas: 0 };
+        const statsHTML = `<span class="stats-mini"><span class="stat-ok">✓${stats.exitosas}</span> <span class="stat-err">✗${stats.fallidas}</span></span>`;
+
         return `
           <tr class="${estadoClase}">
             <td>${reg.nombre || 'Sin nombre'}</td>
@@ -73,6 +73,7 @@ function generarHTML() {
             <td>[${reg.indiceInicial}-${reg.indiceInicial + reg.cantRegistros - 1}]</td>
             <td>${reg.intervalo}s</td>
             <td>${proxLectura}</td>
+            <td>${statsHTML}</td>
             <td><span class="badge ${estadoClase}">${reg.estado || 'espera'}</span></td>
           </tr>
         `;
@@ -346,6 +347,16 @@ function generarHTML() {
     .badge.espera { background: #ffa50020; color: #ffa500; }
     .badge.leyendo { background: #00d9ff20; color: #00d9ff; }
 
+    /* Estadísticas mini por registrador */
+    .stats-mini {
+      font-size: 0.85rem;
+      font-weight: 500;
+      display: inline-flex;
+      gap: 8px;
+    }
+    .stats-mini .stat-ok { color: #00ff88; }
+    .stats-mini .stat-err { color: #ff4757; }
+
     /* Logs */
     .logs-container {
       max-height: 400px;
@@ -433,34 +444,6 @@ function generarHTML() {
       gap: 20px;
     }
 
-    /* Estadísticas */
-    .stats-grid {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 15px;
-      margin-bottom: 20px;
-    }
-    .stat-card {
-      background: #0d1117;
-      border-radius: 8px;
-      padding: 20px;
-      text-align: center;
-      border: 1px solid #0f3460;
-    }
-    .stat-card .stat-value {
-      font-size: 2rem;
-      font-weight: 700;
-      margin-bottom: 5px;
-    }
-    .stat-card .stat-label {
-      font-size: 0.85rem;
-      color: #888;
-      text-transform: uppercase;
-    }
-    .stat-card.exitosas .stat-value { color: #00ff88; }
-    .stat-card.fallidas .stat-value { color: #ff4757; }
-    .stat-card.total .stat-value { color: #00d9ff; }
-
     /* Log de registradores */
     .logs-container-small {
       max-height: 300px;
@@ -546,6 +529,7 @@ function generarHTML() {
             <th>Registros</th>
             <th>Intervalo</th>
             <th>Próx. Lectura</th>
+            <th>Lecturas</th>
             <th>Estado</th>
           </tr>
         </thead>
@@ -553,24 +537,6 @@ function generarHTML() {
           ${registradoresHTML}
         </tbody>
       </table>
-    </div>
-
-    <div class="section">
-      <h2>📈 Estadísticas de Lecturas</h2>
-      <div class="stats-grid">
-        <div class="stat-card exitosas">
-          <div id="stat-exitosas" class="stat-value">${estado.estadisticas.lecturasExitosas}</div>
-          <div class="stat-label">Exitosas</div>
-        </div>
-        <div class="stat-card fallidas">
-          <div id="stat-fallidas" class="stat-value">${estado.estadisticas.lecturasFallidas}</div>
-          <div class="stat-label">Fallidas</div>
-        </div>
-        <div class="stat-card total">
-          <div id="stat-total" class="stat-value">${estado.estadisticas.totalLecturas}</div>
-          <div class="stat-label">Total</div>
-        </div>
-      </div>
     </div>
 
     <div class="logs-grid">
@@ -709,14 +675,7 @@ function generarHTML() {
 
         // Actualizar registradores
         document.getElementById('registradores-count').textContent = estado.registradores.length;
-        document.getElementById('registradores-body').innerHTML = generarRegistradoresHTML(estado.registradores);
-
-        // Actualizar estadísticas
-        if (estado.estadisticas) {
-          document.getElementById('stat-exitosas').textContent = estado.estadisticas.lecturasExitosas || 0;
-          document.getElementById('stat-fallidas').textContent = estado.estadisticas.lecturasFallidas || 0;
-          document.getElementById('stat-total').textContent = estado.estadisticas.totalLecturas || 0;
-        }
+        document.getElementById('registradores-body').innerHTML = generarRegistradoresHTML(estado.registradores, estado.estadisticasPorRegistrador || {});
 
         // Actualizar logs del sistema SOLO si hay nuevos
         const logsContainer = document.getElementById('logs-container');
@@ -753,9 +712,9 @@ function generarHTML() {
       return horas + ':' + minutos + ':' + segundos;
     }
 
-    function generarRegistradoresHTML(registradores) {
+    function generarRegistradoresHTML(registradores, estadisticasPorRegistrador) {
       if (registradores.length === 0) {
-        return '<tr><td colspan="6" class="empty">No hay registradores configurados</td></tr>';
+        return '<tr><td colspan="7" class="empty">No hay registradores configurados</td></tr>';
       }
       return registradores.map(reg => {
         let estadoClase = 'espera';
@@ -766,12 +725,17 @@ function generarHTML() {
         const proxLectura = reg.estado === 'inactivo' ? '---' :
           (reg.proximaLectura !== null ? reg.proximaLectura + 's' : '---');
 
+        // Estadísticas individuales
+        const stats = estadisticasPorRegistrador[reg.id] || { exitosas: 0, fallidas: 0 };
+        const statsHTML = '<span class="stats-mini"><span class="stat-ok">✓' + stats.exitosas + '</span> <span class="stat-err">✗' + stats.fallidas + '</span></span>';
+
         return '<tr class="' + estadoClase + '">' +
           '<td>' + (reg.nombre || 'Sin nombre') + '</td>' +
           '<td>' + reg.ip + ':' + reg.puerto + '</td>' +
           '<td>[' + reg.indiceInicial + '-' + (reg.indiceInicial + reg.cantRegistros - 1) + ']</td>' +
           '<td>' + reg.intervalo + 's</td>' +
           '<td>' + proxLectura + '</td>' +
+          '<td>' + statsHTML + '</td>' +
           '<td><span class="badge ' + estadoClase + '">' + (reg.estado || 'espera') + '</span></td>' +
           '</tr>';
       }).join('');
@@ -1125,8 +1089,11 @@ function log(mensaje, tipo = 'info') {
 
 /**
  * Log específico para lecturas de registradores (va al log separado y actualiza estadísticas)
+ * @param {string} registradorId - ID del registrador
+ * @param {string} mensaje - Mensaje de log
+ * @param {boolean} exito - Si la lectura fue exitosa
  */
-function logRegistrador(mensaje, exito) {
+function logRegistrador(registradorId, mensaje, exito) {
   const timestamp = new Date().toLocaleTimeString('es-ES', { hour12: false });
   const tipo = exito ? 'exito' : 'error';
 
@@ -1137,12 +1104,16 @@ function logRegistrador(mensaje, exito) {
     estado.logsRegistradores = estado.logsRegistradores.slice(0, MAX_LOGS_REGISTRADORES);
   }
 
-  // Actualizar estadísticas
-  estado.estadisticas.totalLecturas++;
-  if (exito) {
-    estado.estadisticas.lecturasExitosas++;
-  } else {
-    estado.estadisticas.lecturasFallidas++;
+  // Actualizar estadísticas por registrador
+  if (registradorId) {
+    if (!estado.estadisticasPorRegistrador[registradorId]) {
+      estado.estadisticasPorRegistrador[registradorId] = { exitosas: 0, fallidas: 0 };
+    }
+    if (exito) {
+      estado.estadisticasPorRegistrador[registradorId].exitosas++;
+    } else {
+      estado.estadisticasPorRegistrador[registradorId].fallidas++;
+    }
   }
 
   // También imprimir en consola
